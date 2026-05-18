@@ -7,6 +7,11 @@ import { apiUrl } from "../config/apiBase.js";
 import SKALogo from "../components/SKALogo.jsx";
 import { PLATFORM_BRAND, PUBLIC_PAGE_TITLES } from "../constants/branding.js";
 import { AUTH_FETCH_TIMEOUT_MS, fetchWithTimeout, formatFetchError } from "../utils/fetchWithTimeout.js";
+import {
+  buildLoginFormBody,
+  formatAuthError,
+  logAuthFailure,
+} from "../utils/authApiError.js";
 
 const LOGIN_URL = apiUrl("/api/v1/auth/login");
 
@@ -68,14 +73,6 @@ function EyeOffIcon({ className }) {
   );
 }
 
-function formatApiError(detail, status) {
-  if (status === 401 || status === 400) {
-    return "البريد الإلكتروني أو اسم المستخدم أو كلمة المرور غير صحيحة.";
-  }
-  if (typeof detail === "string" && detail.trim()) return detail;
-  return "تعذر تسجيل الدخول. حاول مرة أخرى.";
-}
-
 export default function LoginPage() {
   const navigate = useNavigate();
   const [username, setUsername] = useState("");
@@ -103,11 +100,18 @@ export default function LoginPage() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
+    const loginId = username.trim();
+    if (!loginId) {
+      setError("أدخل البريد الإلكتروني أو اسم المستخدم.");
+      return;
+    }
+    if (!password) {
+      setError("أدخل كلمة المرور.");
+      return;
+    }
     setLoading(true);
     try {
-      const body = new URLSearchParams();
-      body.set("username", username.trim());
-      body.set("password", password);
+      const body = buildLoginFormBody(loginId, password);
 
       const res = await fetchWithTimeout(
         LOGIN_URL,
@@ -115,6 +119,7 @@ export default function LoginPage() {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
           },
           body: body.toString(),
         },
@@ -124,7 +129,8 @@ export default function LoginPage() {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        setError(formatApiError(data.detail, res.status));
+        logAuthFailure("Login", LOGIN_URL, res, data, { loginId });
+        setError(formatAuthError(res.status, data, "تعذر تسجيل الدخول."));
         return;
       }
 
@@ -151,6 +157,11 @@ export default function LoginPage() {
         if (!meOk || !meData.role) {
           localStorage.removeItem(ACCESS_TOKEN_KEY);
           localStorage.removeItem(USER_ROLE_KEY);
+          console.error("[Login/me] profile load failed", {
+            urls: CURRENT_USER_ME_URLS,
+            meData,
+            loginId,
+          });
           setError("تم تسجيل الدخول لكن تعذر تحميل بيانات الحساب. حاول مرة أخرى.");
           return;
         }
@@ -170,7 +181,8 @@ export default function LoginPage() {
           navigate("/dashboard", { replace: true });
         }
       } else {
-        setError(formatApiError(null, res.status));
+        logAuthFailure("Login", LOGIN_URL, res, data, { loginId, reason: "missing access_token" });
+        setError(formatAuthError(res.status, data, "تعذر تسجيل الدخول."));
       }
     } catch (err) {
       console.error("[Login] request failed:", LOGIN_URL, err);

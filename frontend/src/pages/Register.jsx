@@ -6,6 +6,11 @@ import { apiUrl } from "../config/apiBase.js";
 import SKALogo from "../components/SKALogo.jsx";
 import { PLATFORM_BRAND, PUBLIC_PAGE_TITLES } from "../constants/branding.js";
 import { AUTH_FETCH_TIMEOUT_MS, fetchWithTimeout, formatFetchError } from "../utils/fetchWithTimeout.js";
+import {
+  buildRegisterPayload,
+  formatAuthError,
+  logAuthFailure,
+} from "../utils/authApiError.js";
 
 const REGISTER_URL = apiUrl("/api/v1/auth/users");
 const BRANCH_OPTIONS = [
@@ -118,14 +123,6 @@ const inputInner =
 const selectBase =
   `${inputInner} appearance-none cursor-pointer py-[0.7rem] ps-11 pe-10`;
 
-function normalizeError(detail) {
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) {
-    return detail.map((e) => e.msg || JSON.stringify(e)).join(" — ");
-  }
-  return "";
-}
-
 export default function RegisterPage() {
   const navigate = useNavigate();
   const [name, setName] = useState("");
@@ -161,16 +158,8 @@ export default function RegisterPage() {
     setError("");
     setSuccess("");
 
-    const safeEmail = email.trim();
+    const safeEmail = email.trim().toLowerCase();
     const safeName = name.trim();
-    const emailLocal = safeEmail.includes("@") ? safeEmail.split("@")[0] : safeEmail;
-    const fromName = safeName
-      .toLowerCase()
-      .replace(/\s+/g, "_")
-      .replace(/[^\p{L}\p{N}_-]/gu, "")
-      .slice(0, 20);
-    const derivedUsername = (emailLocal || fromName || `user_${Date.now()}`).toLowerCase().slice(0, 30);
-    const safeUsername = derivedUsername || `user_${Date.now()}`;
     const numericTenant = 1;
     const selectedBranch = BRANCH_OPTIONS.find((b) => b.id === Number(branchId)) || BRANCH_OPTIONS[0];
 
@@ -180,6 +169,10 @@ export default function RegisterPage() {
     }
     if (!safeEmail) {
       setError("البريد الإلكتروني مطلوب.");
+      return;
+    }
+    if (!safeEmail.includes("@") || !safeEmail.includes(".")) {
+      setError("أدخل بريداً إلكترونياً صالحاً.");
       return;
     }
     if (password.length < 6) {
@@ -196,16 +189,15 @@ export default function RegisterPage() {
     }
     setLoading(true);
     try {
-      const payload = {
+      const payload = buildRegisterPayload({
         email: safeEmail,
-        username: safeUsername,
         password,
         role,
-        tenant_id: numericTenant,
-        full_name: safeName,
-        branch_id: selectedBranch.id,
-        branch_name: selectedBranch.name,
-      };
+        tenantId: numericTenant,
+        fullName: safeName,
+        branchId: selectedBranch.id,
+        branchName: selectedBranch.name,
+      });
 
       const res = await fetchWithTimeout(
         REGISTER_URL,
@@ -213,6 +205,7 @@ export default function RegisterPage() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            Accept: "application/json",
           },
           body: JSON.stringify(payload),
         },
@@ -227,11 +220,8 @@ export default function RegisterPage() {
         return;
       }
 
-      const backendMessage =
-        normalizeError(data?.detail) ||
-        (typeof data?.message === "string" ? data.message : "") ||
-        "تعذر إنشاء الحساب";
-      setError(backendMessage);
+      logAuthFailure("Register", REGISTER_URL, res, data, { payload: { ...payload, password: "[redacted]" } });
+      setError(formatAuthError(res.status, data, "تعذر إنشاء الحساب."));
     } catch (err) {
       console.error("[Register] request failed:", REGISTER_URL, err);
       setError(formatFetchError(err, "تعذر إنشاء الحساب. تحقق من الاتصال بالإنترنت."));
