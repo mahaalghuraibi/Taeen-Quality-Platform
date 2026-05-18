@@ -35,6 +35,7 @@ import logging
 import math
 import os
 import threading
+import time
 from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
@@ -436,6 +437,10 @@ def _yolo_analysis_slot(*, wait: bool = True) -> Iterator[None]:
     if wait:
         acquired = _YOLO_INFERENCE_LOCK.acquire(blocking=True, timeout=_YOLO_LOCK_WAIT_SEC)
         if not acquired:
+            logger.warning(
+                "YOLO inference slot timeout: waited %ds — inference lock still held; rejecting request.",
+                _YOLO_LOCK_WAIT_SEC,
+            )
             raise ValueError("انتهت مهلة انتظار التحليل. حاول مرة أخرى بعد قليل.")
     elif not _YOLO_INFERENCE_LOCK.acquire(blocking=False):
         raise ValueError(_YOLO_BUSY_MESSAGE)
@@ -1558,9 +1563,23 @@ def analyze_frame_yolo(
     if not settings.YOLO_ENABLED:
         raise ValueError("YOLO is disabled (YOLO_ENABLED=false).")
 
+    _t0 = time.monotonic()
     with _yolo_analysis_slot(wait=wait_for_slot):
+        _t_slot = time.monotonic()
+        logger.info(
+            "YOLO slot acquired camera=%s wait_mode=%s slot_wait=%.2fs",
+            camera_name or "—",
+            "blocking" if wait_for_slot else "nonblocking",
+            _t_slot - _t0,
+        )
         payload = _analyze_frame_yolo_core(image_bytes, camera_name, location)
-        logger.info("YOLO inference finished camera=%s", camera_name or "—")
+        _elapsed = time.monotonic() - _t_slot
+        logger.info(
+            "YOLO inference finished camera=%s inference_time=%.2fs total_time=%.2fs",
+            camera_name or "—",
+            _elapsed,
+            time.monotonic() - _t0,
+        )
         return payload
 
 

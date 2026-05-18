@@ -119,17 +119,34 @@ def _download_via_direct_url(dest: Path) -> bool:
     tmp = dest.with_suffix(".pt.part")
     for attempt in range(1, _DOWNLOAD_MAX_RETRIES + 1):
         try:
-            logger.info("YOLO runtime direct download attempt %d/%d", attempt, _DOWNLOAD_MAX_RETRIES)
+            logger.info(
+                "YOLO runtime direct download attempt %d/%d url=%s dest=%s",
+                attempt,
+                _DOWNLOAD_MAX_RETRIES,
+                _HF_PPE_URL,
+                dest.name,
+            )
             req = urllib.request.Request(
                 _HF_PPE_URL,
                 headers={"User-Agent": "taeen-quality-platform/1.0"},
             )
+            downloaded = 0
+            t0 = time.monotonic()
             with urllib.request.urlopen(req, timeout=_DOWNLOAD_TIMEOUT_SEC) as resp, tmp.open("wb") as out:
                 while True:
                     chunk = resp.read(256 * 1024)
                     if not chunk:
                         break
                     out.write(chunk)
+                    downloaded += len(chunk)
+            elapsed = max(0.01, time.monotonic() - t0)
+            rate_kb = downloaded / elapsed / 1024
+            logger.info(
+                "YOLO direct download complete: bytes=%d time=%.1fs rate=%.0fkB/s",
+                downloaded,
+                elapsed,
+                rate_kb,
+            )
             if tmp.stat().st_size < _EXPECTED_MIN_BYTES:
                 tmp.unlink(missing_ok=True)
                 raise OSError(f"downloaded file too small ({tmp.stat().st_size} bytes)")

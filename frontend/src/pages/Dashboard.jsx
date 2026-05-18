@@ -48,7 +48,7 @@ import {
   isMonitoringSkippedResponse,
   LIVE_ANALYSIS_GAP_MS,
 } from "../utils/monitoringApi.js";
-import { wakeApiBeforeAuth } from "../utils/wakeApi.js";
+import { wakeApiBeforeAuth, markApiAlive } from "../utils/wakeApi.js";
 import {
   STAFF_SECTION_IDS,
   SUPERVISOR_SECTION_IDS,
@@ -967,6 +967,8 @@ export default function Dashboard() {
   const liveAnalysisInFlightRef = useRef(false);
   const liveGenRef = useRef(0);
   const liveAlertsThrottleRef = useRef(0);
+  /** Always holds the latest tickLiveMonitoringAnalysis so timers/finally don't use stale closures. */
+  const tickLiveRef = useRef(null);
   const selectedMonitoringZoneIdRef = useRef(selectedMonitoringZoneId);
   const [monitoringWebcamOn, setMonitoringWebcamOn] = useState(false);
   const [monitoringWebcamBusy, setMonitoringWebcamBusy] = useState(false);
@@ -2406,7 +2408,9 @@ export default function Dashboard() {
   // Shared fetch helper used by image upload, video frames, and live 1 Hz monitoring.
   const callAnalyzeFrameEndpoint = useCallback(
     async (imageFile, token, { analysisMode = "manual" } = {}) => {
-      await wakeApiBeforeAuth();
+      // Skip wake ping in live mode — server is active if live analysis is running.
+      // For manual mode use cached check: wakeApiBeforeAuth skips if API was alive within 90s.
+      if (analysisMode !== "live") await wakeApiBeforeAuth();
 
       const fd = new FormData();
       fd.append("image", imageFile);
@@ -2435,6 +2439,10 @@ export default function Dashboard() {
         MONITORING_FETCH_TIMEOUT_MS,
       );
       const body = await res.json().catch(() => ({}));
+      // Mark API as alive so subsequent manual calls skip the wake probe.
+      if (res.ok || (res.status >= 200 && res.status < 502)) {
+        markApiAlive();
+      }
       return { ok: res.ok, status: res.status, body };
     },
     [
@@ -2508,12 +2516,13 @@ export default function Dashboard() {
     } finally {
       liveAnalysisInFlightRef.current = false;
       setLiveTickBusy(false);
-      if (monitoringLiveAutoOn && monitoringWebcamOn && gen === liveGenRef.current) {
+      // Use tickLiveRef so this closure always calls the latest version, never a stale one.
+      if (gen === liveGenRef.current) {
         if (liveAnalysisScheduleRef.current != null) {
           clearTimeout(liveAnalysisScheduleRef.current);
         }
         liveAnalysisScheduleRef.current = window.setTimeout(
-          () => void tickLiveMonitoringAnalysis(),
+          () => void tickLiveRef.current?.(),
           LIVE_ANALYSIS_GAP_MS,
         );
       }
@@ -2529,6 +2538,11 @@ export default function Dashboard() {
     loadSupervisorSummary,
   ]);
 
+  // Keep tickLiveRef in sync so timers always call the freshest version.
+  useEffect(() => {
+    tickLiveRef.current = tickLiveMonitoringAnalysis;
+  }, [tickLiveMonitoringAnalysis]);
+
   useEffect(() => {
     selectedMonitoringZoneIdRef.current = selectedMonitoringZoneId;
   }, [selectedMonitoringZoneId]);
@@ -2541,6 +2555,8 @@ export default function Dashboard() {
     });
   }, [monitoringWebcamOn]);
 
+  // Start / stop the live analysis cycle. Only depends on on/off flags — NOT on the callback
+  // identity, so form-state changes don't restart the timer every re-render.
   useEffect(() => {
     if (!monitoringLiveAutoOn || !monitoringWebcamOn) {
       if (liveAnalysisScheduleRef.current != null) {
@@ -2549,14 +2565,14 @@ export default function Dashboard() {
       }
       return undefined;
     }
-    void tickLiveMonitoringAnalysis();
+    void tickLiveRef.current?.();
     return () => {
       if (liveAnalysisScheduleRef.current != null) {
         clearTimeout(liveAnalysisScheduleRef.current);
         liveAnalysisScheduleRef.current = null;
       }
     };
-  }, [monitoringLiveAutoOn, monitoringWebcamOn, tickLiveMonitoringAnalysis]);
+  }, [monitoringLiveAutoOn, monitoringWebcamOn]);
 
   /** Capture one JPEG frame from the in-browser preview and reuse the same analyze-frame API. */
   async function analyzeMonitoringWebcamFrame() {
@@ -3135,6 +3151,10 @@ export default function Dashboard() {
     setMonitoringAnalyzeLoading(false);
     setMonitoringWebcamBusy(false);
     setLiveAnalysisError("");
+    // Clear the analysis result display so the panel doesn't show stale data after reset.
+    setMonitoringAnalysisResult(null);
+    setMonitoringLastAnalyzedAt(null);
+    setLiveSlotStates({});
     if (stopAuto) setMonitoringLiveAutoOn(false);
     if (liveAnalysisScheduleRef.current != null) {
       clearTimeout(liveAnalysisScheduleRef.current);
