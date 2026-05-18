@@ -41,7 +41,6 @@ import {
   DEFAULT_FETCH_TIMEOUT_MS,
   MONITORING_FETCH_TIMEOUT_MS,
   fetchWithTimeout,
-  formatFetchError,
   formatMonitoringFetchError,
 } from "../utils/fetchWithTimeout.js";
 import { wakeApiBeforeAuth } from "../utils/wakeApi.js";
