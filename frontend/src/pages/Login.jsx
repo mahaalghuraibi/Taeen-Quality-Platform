@@ -7,13 +7,12 @@ import { apiUrl } from "../config/apiBase.js";
 import SKALogo from "../components/SKALogo.jsx";
 import { PLATFORM_BRAND, PUBLIC_PAGE_TITLES } from "../constants/branding.js";
 import { AUTH_FETCH_TIMEOUT_MS, fetchWithTimeout, formatFetchError } from "../utils/fetchWithTimeout.js";
+import { wakeApiBeforeAuth } from "../utils/wakeApi.js";
 import {
   buildLoginFormBody,
   formatAuthError,
   logAuthFailure,
 } from "../utils/authApiError.js";
-
-const LOGIN_URL = apiUrl("/api/v1/auth/login");
 
 function MailIcon({ className }) {
   return (
@@ -110,11 +109,20 @@ export default function LoginPage() {
       return;
     }
     setLoading(true);
+    const loginUrl = apiUrl("/api/v1/auth/login");
     try {
+      const apiReady = await wakeApiBeforeAuth();
+      if (!apiReady) {
+        setError(
+          "الخادم لا يستجيب حالياً. انتظر دقيقة (قد يكون في وضع السكون على Render) ثم أعد المحاولة.",
+        );
+        return;
+      }
+
       const body = buildLoginFormBody(loginId, password);
 
       const res = await fetchWithTimeout(
-        LOGIN_URL,
+        loginUrl,
         {
           method: "POST",
           headers: {
@@ -129,7 +137,7 @@ export default function LoginPage() {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        logAuthFailure("Login", LOGIN_URL, res, data, { loginId });
+        logAuthFailure("Login", loginUrl, res, data, { loginId });
         setError(formatAuthError(res.status, data, "تعذر تسجيل الدخول."));
         return;
       }
@@ -181,11 +189,11 @@ export default function LoginPage() {
           navigate("/dashboard", { replace: true });
         }
       } else {
-        logAuthFailure("Login", LOGIN_URL, res, data, { loginId, reason: "missing access_token" });
+        logAuthFailure("Login", loginUrl, res, data, { loginId, reason: "missing access_token" });
         setError(formatAuthError(res.status, data, "تعذر تسجيل الدخول."));
       }
     } catch (err) {
-      console.error("[Login] request failed:", LOGIN_URL, err);
+      console.error("[Login] request failed:", loginUrl, err);
       setError(formatFetchError(err, "تعذر تسجيل الدخول. تحقق من الاتصال بالإنترنت."));
     } finally {
       setLoading(false);

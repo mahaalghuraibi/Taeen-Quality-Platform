@@ -1,8 +1,8 @@
 /** Default HTTP timeout for API calls (ms). */
 export const DEFAULT_FETCH_TIMEOUT_MS = 45_000;
 
-/** Login / register / profile bootstrap. */
-export const AUTH_FETCH_TIMEOUT_MS = 30_000;
+/** Login / register / profile bootstrap (Render cold start can exceed 30s). */
+export const AUTH_FETCH_TIMEOUT_MS = import.meta.env.PROD ? 90_000 : 30_000;
 
 /** Monitoring frame analysis (YOLO on server — can be slow). */
 export const MONITORING_FETCH_TIMEOUT_MS = 90_000;

@@ -6,13 +6,12 @@ import { apiUrl } from "../config/apiBase.js";
 import SKALogo from "../components/SKALogo.jsx";
 import { PLATFORM_BRAND, PUBLIC_PAGE_TITLES } from "../constants/branding.js";
 import { AUTH_FETCH_TIMEOUT_MS, fetchWithTimeout, formatFetchError } from "../utils/fetchWithTimeout.js";
+import { wakeApiBeforeAuth } from "../utils/wakeApi.js";
 import {
   buildRegisterPayload,
   formatAuthError,
   logAuthFailure,
 } from "../utils/authApiError.js";
-
-const REGISTER_URL = apiUrl("/api/v1/auth/users");
 const BRANCH_OPTIONS = [
   { id: 1, name: "فرع تجريبي" },
   { id: 2, name: "فرع الرياض" },
@@ -188,7 +187,16 @@ export default function RegisterPage() {
       return;
     }
     setLoading(true);
+    const registerUrl = apiUrl("/api/v1/auth/users");
     try {
+      const apiReady = await wakeApiBeforeAuth();
+      if (!apiReady) {
+        setError(
+          "الخادم لا يستجيب حالياً. انتظر دقيقة (قد يكون في وضع السكون على Render) ثم أعد المحاولة.",
+        );
+        return;
+      }
+
       const payload = buildRegisterPayload({
         email: safeEmail,
         password,
@@ -200,7 +208,7 @@ export default function RegisterPage() {
       });
 
       const res = await fetchWithTimeout(
-        REGISTER_URL,
+        registerUrl,
         {
           method: "POST",
           headers: {
@@ -220,10 +228,10 @@ export default function RegisterPage() {
         return;
       }
 
-      logAuthFailure("Register", REGISTER_URL, res, data, { payload: { ...payload, password: "[redacted]" } });
+      logAuthFailure("Register", registerUrl, res, data, { payload: { ...payload, password: "[redacted]" } });
       setError(formatAuthError(res.status, data, "تعذر إنشاء الحساب."));
     } catch (err) {
-      console.error("[Register] request failed:", REGISTER_URL, err);
+      console.error("[Register] request failed:", registerUrl, err);
       setError(formatFetchError(err, "تعذر إنشاء الحساب. تحقق من الاتصال بالإنترنت."));
     } finally {
       setLoading(false);

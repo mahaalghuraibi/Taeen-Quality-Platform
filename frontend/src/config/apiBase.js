@@ -1,12 +1,10 @@
 /**
- * Production: static frontend on Render (or CDN) calls API on another host.
+ * Production: static frontend on Render calls API on another host.
  *
- * Priority:
- * 1) Build-time: VITE_API_BASE_URL (recommended on Render Static Site → Environment → Build)
- * 2) Runtime: localStorage key `ska_api_base` = full origin, e.g. https://taeen-quality-platform.onrender.com
- * 3) Fallback: known Render hostname pairing (only when env unset — avoids silent same-origin /api failures)
- *
- * Dev: leave unset — Vite proxies `/api` to the backend (see vite.config.js).
+ * Priority (production):
+ * 1) VITE_API_BASE_URL (Render Static Site → Environment, build time)
+ * 2) Known pairing fallback for taeen-quality-frontend.onrender.com
+ * 3) Dev only: localStorage `ska_api_base`
  */
 function normalizeBase(raw) {
   return String(raw ?? "")
@@ -14,8 +12,11 @@ function normalizeBase(raw) {
     .replace(/\/+$/, "");
 }
 
+export const PRODUCTION_API_ORIGIN = "https://taeen-quality-platform.onrender.com";
+
 function storageApiBase() {
   if (typeof window === "undefined") return "";
+  if (import.meta.env.PROD) return "";
   try {
     const v = window.localStorage?.getItem("ska_api_base");
     if (v && /^https?:\/\//i.test(v)) return normalizeBase(v);
@@ -25,9 +26,7 @@ function storageApiBase() {
   return "";
 }
 
-const PRODUCTION_API_ORIGIN = "https://taeen-quality-platform.onrender.com";
-
-/** Last-resort when VITE_API_BASE_URL was not baked into the build. */
+/** When VITE_API_BASE_URL was not baked into the build. */
 function inferProductionApiBase() {
   if (typeof window === "undefined") return "";
   if (!import.meta.env.PROD) return "";
@@ -36,9 +35,26 @@ function inferProductionApiBase() {
   return PRODUCTION_API_ORIGIN;
 }
 
+/** Clear stale overrides that pointed login at a dead host. */
+export function clearStaleApiBaseOverride() {
+  if (typeof window === "undefined" || !import.meta.env.PROD) return;
+  try {
+    const v = window.localStorage?.getItem("ska_api_base");
+    if (!v) return;
+    const n = normalizeBase(v);
+    if (n && n !== PRODUCTION_API_ORIGIN) {
+      window.localStorage.removeItem("ska_api_base");
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+clearStaleApiBaseOverride();
+
 const fromEnv = normalizeBase(import.meta.env.VITE_API_BASE_URL);
 
-export const API_BASE_URL = fromEnv || storageApiBase() || inferProductionApiBase();
+export const API_BASE_URL = fromEnv || inferProductionApiBase() || storageApiBase();
 
 /**
  * @param {string} path - Absolute path starting with `/` or full `http(s)://`, `blob:`, `data:` URL.
