@@ -25,15 +25,15 @@ function storageApiBase() {
   return "";
 }
 
+const PRODUCTION_API_ORIGIN = "https://taeen-quality-platform.onrender.com";
+
 /** Last-resort when VITE_API_BASE_URL was not baked into the build. */
 function inferProductionApiBase() {
   if (typeof window === "undefined") return "";
   if (!import.meta.env.PROD) return "";
   const h = String(window.location.hostname || "").toLowerCase();
-  if (h === "taeen-quality-frontend.onrender.com") {
-    return "https://taeen-quality-platform.onrender.com";
-  }
-  return "";
+  if (h === "localhost" || h === "127.0.0.1") return "";
+  return PRODUCTION_API_ORIGIN;
 }
 
 const fromEnv = normalizeBase(import.meta.env.VITE_API_BASE_URL);

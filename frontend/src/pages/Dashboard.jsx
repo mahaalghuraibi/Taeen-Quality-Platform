@@ -38,6 +38,11 @@ import { useExpandMoreList } from "../hooks/useExpandMoreList.js";
 import EmptyState from "../components/shared/EmptyState.jsx";
 import { PLATFORM_BRAND, dashboardTitleForRole } from "../constants/branding.js";
 import {
+  MONITORING_FETCH_TIMEOUT_MS,
+  fetchWithTimeout,
+  formatFetchError,
+} from "../utils/fetchWithTimeout.js";
+import {
   STAFF_SECTION_IDS,
   SUPERVISOR_SECTION_IDS,
   ROUTES,
@@ -349,7 +354,7 @@ const ADMIN_SETTINGS_DEFAULTS = {
     excelEnabled: false,
   },
   system: {
-    platformName: "منصة تعيين الجودة",
+    platformName: "عين الجودة",
     defaultLanguage: "العربية",
     timezone: "Asia/Riyadh",
   },
@@ -960,6 +965,7 @@ export default function Dashboard() {
   /** Periodic analyze-frame while webcam is on (1 Hz); independent of image/video upload modes */
   const [monitoringLiveAutoOn, setMonitoringLiveAutoOn] = useState(false);
   const [liveTickBusy, setLiveTickBusy] = useState(false);
+  const [liveAnalysisError, setLiveAnalysisError] = useState("");
   /** Per-zone snapshot from last live tick for that zone (device preview shared until RTSP per slot) */
   const [liveSlotStates, setLiveSlotStates] = useState({});
   /** Per-zone IP / RTSP / webcam connection UI (localStorage until backend CRUD exists). */
@@ -2386,11 +2392,15 @@ export default function Dashboard() {
       if (!loc && zoneMeta) loc = zoneMeta.zoneAr;
       if (name) fd.append("camera_name", name);
       if (loc) fd.append("location", loc);
-      const res = await fetch(MONITORING_ANALYZE_URL, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: fd,
-      });
+      const res = await fetchWithTimeout(
+        MONITORING_ANALYZE_URL,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: fd,
+        },
+        MONITORING_FETCH_TIMEOUT_MS,
+      );
       const body = await res.json().catch(() => ({}));
       return { ok: res.ok, status: res.status, body };
     },
@@ -2423,7 +2433,13 @@ export default function Dashboard() {
       const { ok, status, body } = await callAnalyzeFrameEndpoint(file, token);
       if (gen !== liveGenRef.current) return;
       if (handleProtectedAuthFailure(status, body?.detail)) return;
-      if (!ok) return;
+      if (!ok) {
+        const errDetail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : null;
+        const msg = errDetail || `فشل التحليل التلقائي (${status || "—"}).`;
+        setLiveAnalysisError(msg);
+        return;
+      }
+      setLiveAnalysisError("");
 
       setMonitoringAnalysisResult(body);
       setMonitoringLastAnalyzedAt(new Date().toISOString());
@@ -2449,6 +2465,12 @@ export default function Dashboard() {
         void loadSupervisorAlerts();
       }
       void loadSupervisorSummary();
+    } catch (err) {
+      if (gen === liveGenRef.current) {
+        const msg = formatFetchError(err, "تعذر إكمال التحليل التلقائي.");
+        setLiveAnalysisError(msg);
+        console.error("[Monitoring] live tick failed:", MONITORING_ANALYZE_URL, err);
+      }
     } finally {
       liveAnalysisInFlightRef.current = false;
       setLiveTickBusy(false);
@@ -2534,8 +2556,12 @@ export default function Dashboard() {
       await loadSupervisorAlerts();
       await loadSupervisorCameras();
       await loadSupervisorSummary();
-    } catch (_err) {
-      setToast({ type: "error", text: "تعذر التقاط أو تحليل الصورة من الكاميرا." });
+    } catch (err) {
+      console.error("[Monitoring] manual webcam frame failed:", MONITORING_ANALYZE_URL, err);
+      setToast({
+        type: "error",
+        text: formatFetchError(err, "تعذر التقاط أو تحليل الصورة من الكاميرا."),
+      });
     } finally {
       setMonitoringWebcamBusy(false);
       setMonitoringAnalyzeLoading(false);
@@ -2572,8 +2598,12 @@ export default function Dashboard() {
       await loadSupervisorAlerts();
       await loadSupervisorCameras();
       await loadSupervisorSummary();
-    } catch (_err) {
-      setToast({ type: "error", text: "فشل تحليل الصورة. تحقق من إعدادات الذكاء الاصطناعي." });
+    } catch (err) {
+      console.error("[Monitoring] image upload analyze failed:", MONITORING_ANALYZE_URL, err);
+      setToast({
+        type: "error",
+        text: formatFetchError(err, "فشل تحليل الصورة. تحقق من إعدادات الذكاء الاصطناعي."),
+      });
     } finally {
       setMonitoringAnalyzeLoading(false);
     }
@@ -3050,13 +3080,23 @@ export default function Dashboard() {
     monitoringLiveAutoOn,
   ]);
 
-  const stopMonitoringWebcam = useCallback(() => {
+  const resetLiveAnalysisState = useCallback((opts = {}) => {
+    const { stopAuto = false } = opts;
     liveGenRef.current += 1;
-    setMonitoringLiveAutoOn(false);
+    liveAnalysisInFlightRef.current = false;
+    setLiveTickBusy(false);
+    setMonitoringAnalyzeLoading(false);
+    setMonitoringWebcamBusy(false);
+    setLiveAnalysisError("");
+    if (stopAuto) setMonitoringLiveAutoOn(false);
     if (liveAnalysisIntervalRef.current != null) {
       clearInterval(liveAnalysisIntervalRef.current);
       liveAnalysisIntervalRef.current = null;
     }
+  }, []);
+
+  const stopMonitoringWebcam = useCallback(() => {
+    resetLiveAnalysisState({ stopAuto: true });
     try {
       monitoringWebcamStreamRef.current?.getTracks?.().forEach((t) => t.stop());
     } catch {
@@ -3068,7 +3108,7 @@ export default function Dashboard() {
       if (r.current) r.current.srcObject = null;
     });
     setMonitoringWebcamOn(false);
-  }, []);
+  }, [resetLiveAnalysisState]);
 
   const startMonitoringWebcam = useCallback(async () => {
     setMonitoringWebcamError("");
@@ -3215,10 +3255,9 @@ export default function Dashboard() {
         setToast({ type: "info", text: "المراقبة المباشرة النشطة مسجَّلة لمنطقة أخرى." });
         return;
       }
-      liveGenRef.current += 1;
-      setMonitoringLiveAutoOn(false);
+      resetLiveAnalysisState({ stopAuto: true });
     },
-    [selectedMonitoringZoneId, setToast],
+    [selectedMonitoringZoneId, setToast, resetLiveAnalysisState],
   );
 
   const handleGoUploadedVideoMonitoringSection = useCallback((zoneId) => {
@@ -4127,26 +4166,37 @@ export default function Dashboard() {
                       <button
                         type="button"
                         disabled={!monitoringLiveAutoOn}
-                        onClick={() => {
-                          liveGenRef.current += 1;
-                          setMonitoringLiveAutoOn(false);
-                        }}
+                        onClick={() => resetLiveAnalysisState({ stopAuto: true })}
                         className="rounded-xl border border-white/20 bg-[#0B1327]/80 px-4 py-2 text-xs font-semibold text-slate-300 disabled:opacity-40"
                       >
                         إيقاف التحليل المباشر
                       </button>
                       <button
                         type="button"
-                        disabled={monitoringAnalyzeLoading || monitoringWebcamBusy || !monitoringWebcamOn}
+                        disabled={!monitoringWebcamOn || monitoringWebcamBusy || monitoringAnalyzeLoading}
                         onClick={() => void analyzeMonitoringWebcamFrame()}
                         className="rounded-xl border border-brand-sky/40 bg-brand/15 px-4 py-2 text-xs font-semibold text-brand-sky disabled:opacity-50"
                       >
                         {monitoringWebcamBusy || monitoringAnalyzeLoading ? "جاري التحليل…" : "تحليل لقطة يدوي"}
                       </button>
+                      {(liveTickBusy || liveAnalysisError || monitoringAnalyzeLoading) && monitoringWebcamOn ? (
+                        <button
+                          type="button"
+                          onClick={() => resetLiveAnalysisState({ stopAuto: false })}
+                          className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs font-semibold text-amber-100"
+                        >
+                          إعادة ضبط حالة التحليل
+                        </button>
+                      ) : null}
                     </div>
                     {monitoringLiveAutoOn && monitoringWebcamOn ? (
                       <p className="mb-2 text-[11px] text-emerald-200/90">
-                        التحليل التلقائي نشط — لا يُرسل طلباً جديداً حتى يكتمل الطلب السابق (منع التكرار).
+                        التحليل التلقائي نشط — يُرسل إطاراً كل ثانية بعد اكتمال الطلب السابق.
+                      </p>
+                    ) : null}
+                    {liveAnalysisError ? (
+                      <p className="mb-2 text-[11px] text-red-300" role="alert">
+                        {liveAnalysisError}
                       </p>
                     ) : null}
                     {monitoringWebcamError ? (

@@ -1,18 +1,18 @@
 /**
- * Production branding — منصة تعيين الجودة
+ * Production branding — عين الجودة
  * Single source of truth for titles shown across nav, auth, dashboard, and HTML meta.
  */
 export const PLATFORM_BRAND = {
   /** Primary Arabic product name */
-  nameAr: "منصة تعيين الجودة",
+  nameAr: "عين الجودة",
   /** Subtitle / positioning line */
   taglineAr: "المنصة الذكية لمراقبة معايير الجودة في المطابخ",
   /** Short nav chip (optional) */
-  nameShortAr: "تعيين الجودة",
+  nameShortAr: "عين الجودة",
   /** Browser title / meta */
-  documentTitle: "منصة تعيين الجودة",
+  documentTitle: "عين الجودة",
   /** Legacy English slug for asset alt text only */
-  logoAlt: "منصة تعيين الجودة — شعار المنصة",
+  logoAlt: "عين الجودة — شعار المنصة",
 };
 
 /** Tab titles for public & admin utility routes — unified platform title. */

@@ -6,6 +6,7 @@ import { ACCESS_TOKEN_KEY, CURRENT_USER_ME_URLS, USER_INFO_KEY, USER_ROLE_KEY } 
 import { apiUrl } from "../config/apiBase.js";
 import SKALogo from "../components/SKALogo.jsx";
 import { PLATFORM_BRAND, PUBLIC_PAGE_TITLES } from "../constants/branding.js";
+import { AUTH_FETCH_TIMEOUT_MS, fetchWithTimeout, formatFetchError } from "../utils/fetchWithTimeout.js";
 
 const LOGIN_URL = apiUrl("/api/v1/auth/login");
 
@@ -67,9 +68,12 @@ function EyeOffIcon({ className }) {
   );
 }
 
-function formatApiError(detail) {
-  void detail;
-  return "البريد الإلكتروني أو اسم المستخدم أو كلمة المرور غير صحيحة.";
+function formatApiError(detail, status) {
+  if (status === 401 || status === 400) {
+    return "البريد الإلكتروني أو اسم المستخدم أو كلمة المرور غير صحيحة.";
+  }
+  if (typeof detail === "string" && detail.trim()) return detail;
+  return "تعذر تسجيل الدخول. حاول مرة أخرى.";
 }
 
 export default function LoginPage() {
@@ -105,18 +109,22 @@ export default function LoginPage() {
       body.set("username", username.trim());
       body.set("password", password);
 
-      const res = await fetch(LOGIN_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
+      const res = await fetchWithTimeout(
+        LOGIN_URL,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: body.toString(),
         },
-        body: body.toString(),
-      });
+        AUTH_FETCH_TIMEOUT_MS,
+      );
 
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        setError(formatApiError(data.detail));
+        setError(formatApiError(data.detail, res.status));
         return;
       }
 
@@ -125,11 +133,15 @@ export default function LoginPage() {
         let meData = {};
         let meOk = false;
         for (const url of CURRENT_USER_ME_URLS) {
-          const meRes = await fetch(url, {
-            headers: {
-              Authorization: `Bearer ${data.access_token}`,
+          const meRes = await fetchWithTimeout(
+            url,
+            {
+              headers: {
+                Authorization: `Bearer ${data.access_token}`,
+              },
             },
-          });
+            AUTH_FETCH_TIMEOUT_MS,
+          );
           meData = await meRes.json().catch(() => ({}));
           if (meRes.ok && meData.role) {
             meOk = true;
@@ -139,7 +151,7 @@ export default function LoginPage() {
         if (!meOk || !meData.role) {
           localStorage.removeItem(ACCESS_TOKEN_KEY);
           localStorage.removeItem(USER_ROLE_KEY);
-          setError(formatApiError(null));
+          setError("تم تسجيل الدخول لكن تعذر تحميل بيانات الحساب. حاول مرة أخرى.");
           return;
         }
         const role = String(meData.role || "");
@@ -158,10 +170,11 @@ export default function LoginPage() {
           navigate("/dashboard", { replace: true });
         }
       } else {
-        setError(formatApiError(null));
+        setError(formatApiError(null, res.status));
       }
-    } catch {
-      setError(formatApiError(null));
+    } catch (err) {
+      console.error("[Login] request failed:", LOGIN_URL, err);
+      setError(formatFetchError(err, "تعذر تسجيل الدخول. تحقق من الاتصال بالإنترنت."));
     } finally {
       setLoading(false);
     }

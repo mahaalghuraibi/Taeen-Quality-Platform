@@ -4,7 +4,7 @@
 
 import { canonicalViolationType, getViolationLabel } from "./violationLabels.js";
 
-export const REPORT_PLATFORM_TITLE_AR = "منصة تعيين الجودة";
+export const REPORT_PLATFORM_TITLE_AR = "عين الجودة";
 export const REPORT_PLATFORM_TAGLINE_AR = "المنصة الذكية لمراقبة معايير الجودة في المطابخ";
 
 export function parseYmdBounds(fromStr, toStr) {

@@ -5,6 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { apiUrl } from "../config/apiBase.js";
 import SKALogo from "../components/SKALogo.jsx";
 import { PLATFORM_BRAND, PUBLIC_PAGE_TITLES } from "../constants/branding.js";
+import { AUTH_FETCH_TIMEOUT_MS, fetchWithTimeout, formatFetchError } from "../utils/fetchWithTimeout.js";
 
 const REGISTER_URL = apiUrl("/api/v1/auth/users");
 const BRANCH_OPTIONS = [
@@ -206,13 +207,17 @@ export default function RegisterPage() {
         branch_name: selectedBranch.name,
       };
 
-      const res = await fetch(REGISTER_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const res = await fetchWithTimeout(
+        REGISTER_URL,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
         },
-        body: JSON.stringify(payload),
-      });
+        AUTH_FETCH_TIMEOUT_MS,
+      );
 
       const data = await res.json().catch(() => ({}));
       if (res.status === 201) {
@@ -227,8 +232,9 @@ export default function RegisterPage() {
         (typeof data?.message === "string" ? data.message : "") ||
         "تعذر إنشاء الحساب";
       setError(backendMessage);
-    } catch {
-      setError("تعذر الاتصال بالخادم. تأكد أن الـ backend يعمل.");
+    } catch (err) {
+      console.error("[Register] request failed:", REGISTER_URL, err);
+      setError(formatFetchError(err, "تعذر إنشاء الحساب. تحقق من الاتصال بالإنترنت."));
     } finally {
       setLoading(false);
     }
