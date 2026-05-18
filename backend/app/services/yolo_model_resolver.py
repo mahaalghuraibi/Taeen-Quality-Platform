@@ -120,6 +120,11 @@ def resolve_yolo_model_path(*, allow_download: bool = True) -> str:
     return ""
 
 
+_HF_PPE_URL = (
+    "https://huggingface.co/Hansung-Cho/yolov8-ppe-detection/resolve/main/best.pt"
+)
+
+
 def _download_fallback_ppe_model() -> Path | None:
     """Download hansung_ppe.pt (~6 MB) from HuggingFace."""
     dest = get_models_dir() / FALLBACK_MODEL_FILENAME
@@ -128,6 +133,7 @@ def _download_fallback_ppe_model() -> Path | None:
         return dest.resolve()
 
     logger.info("YOLO auto-download starting → target=%s", dest.as_posix())
+
     try:
         from huggingface_hub import hf_hub_download
         import shutil
@@ -139,14 +145,33 @@ def _download_fallback_ppe_model() -> Path | None:
         )
         shutil.copy2(cached, dest)
         logger.info(
-            "YOLO auto-download complete → file=%s path=%s size=%s bytes",
-            dest.name,
-            dest.resolve().as_posix(),
+            "YOLO auto-download (hub) complete → %s (%s bytes)",
+            dest.as_posix(),
             dest.stat().st_size,
         )
         return dest.resolve()
     except Exception as exc:
-        logger.error("YOLO auto-download failed: %s", exc)
+        logger.warning("YOLO hub download failed (%s), trying direct URL", exc)
+
+    try:
+        import urllib.request
+
+        tmp = dest.with_suffix(".pt.part")
+        logger.info("YOLO direct download: %s", _HF_PPE_URL)
+        with urllib.request.urlopen(_HF_PPE_URL, timeout=180) as resp, tmp.open("wb") as out:
+            out.write(resp.read())
+        tmp.replace(dest)
+        if dest.stat().st_size < 3_000_000:
+            dest.unlink(missing_ok=True)
+            raise OSError(f"downloaded file too small: {dest}")
+        logger.info(
+            "YOLO direct download complete → %s (%s bytes)",
+            dest.as_posix(),
+            dest.stat().st_size,
+        )
+        return dest.resolve()
+    except Exception as exc:
+        logger.error("YOLO auto-download failed (hub + direct): %s", exc)
         return None
 
 

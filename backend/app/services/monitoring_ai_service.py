@@ -668,5 +668,17 @@ def analyze_monitoring_frame(
     ):
         raise ValueError("الصورة غير صالحة.")
 
+    if settings.MONITORING_AI_DEMO_MODE:
+        return _analyze_demo(camera_name, location)
+
+    from app.services.yolo_model_resolver import ensure_yolo_model_ready
+
+    if not ensure_yolo_model_ready():
+        raise ValueError(
+            "YOLO model not configured. جارٍ تحميل النموذج على الخادم — "
+            "أعد المحاولة بعد دقيقة أو أعد نشر backend على Render."
+        )
+
     from app.services.yolo_monitoring_service import analyze_frame_yolo  # noqa: PLC0415
+
     return analyze_frame_yolo(image_bytes, camera_name, location)
