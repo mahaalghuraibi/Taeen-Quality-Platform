@@ -3,6 +3,7 @@
 #
 # Set DATABASE_URL, SECRET_KEY, CORS_ALLOW_ORIGINS, SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD,
 # and AI keys in the Render dashboard (Environment) or via `envVars` below (use secrets).
+# YOLO weights: runtime download on first analyze-frame only (not during build).
 
 services:
   - type: web
