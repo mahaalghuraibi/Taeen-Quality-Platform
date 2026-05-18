@@ -323,26 +323,6 @@ def _is_bin_like_class(cls_name: str) -> bool:
     return len(parts) >= 2 and parts[-1] == "bin"
 
 
-def _resolve_yolo_model_path() -> str:
-    configured = (settings.YOLO_MODEL_PATH or "").strip()
-    if configured:
-        p = Path(configured).expanduser().resolve()
-        if p.exists() and p.is_file():
-            return p.as_posix()
-        logger.warning("YOLO configured path not found: %s", configured)
-
-    backend_root = Path(__file__).resolve().parents[2]
-    candidates = [
-        backend_root / "ml" / "models" / "keremberk_ppe.pt",
-        backend_root / "ml" / "models" / "hansung_ppe.pt",
-    ]
-    for c in candidates:
-        if c.exists() and c.is_file():
-            logger.info("YOLO fallback model path selected: %s", c.as_posix())
-            return c.as_posix()
-    return ""
-
-
 def _resolve_person_model_path() -> str | None:
     """
     Absolute/local path or Ultralytics hub weights id (e.g. yolov8n.pt — may auto-download).
@@ -391,12 +371,11 @@ def _load_yolo(model_path: str) -> Any:
 
 
 def _get_yolo_model() -> Any:
-    model_path = _resolve_yolo_model_path()
+    from app.services.yolo_model_resolver import missing_model_user_message, resolve_yolo_model_path
+
+    model_path = resolve_yolo_model_path(allow_download=True)
     if not model_path:
-        raise ValueError(
-            "نموذج YOLO غير مُهيَّأ. أضف YOLO_MODEL_PATH=<مسار الملف .pt> "
-            "في backend/.env أو ضع الملف في backend/ml/models/ ثم أعد تشغيل الخادم."
-        )
+        raise ValueError(missing_model_user_message())
     return _load_yolo(model_path)
 
 

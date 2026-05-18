@@ -9,7 +9,7 @@ services:
     name: taeen-backend
     runtime: python
     rootDir: backend
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && python ml/download_ppe_model.py --fallback-only
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port=$PORT
     preDeployCommand: python scripts/create_admin.py
     envVars:

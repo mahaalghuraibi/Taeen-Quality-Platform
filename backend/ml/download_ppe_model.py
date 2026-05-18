@@ -82,24 +82,46 @@ def _verify(dest: Path) -> None:
 
 
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Download PPE YOLO weights into backend/ml/models/")
+    parser.add_argument(
+        "--fallback-only",
+        action="store_true",
+        help="Download only hansung_ppe.pt (~6 MB) — recommended for Render build.",
+    )
+    args = parser.parse_args()
+    specs = [m for m in MODELS if not m["primary"]] if args.fallback_only else MODELS
+
     any_failed = False
 
-    for spec in MODELS:
+    for spec in specs:
         dest = MODELS_DIR / spec["dest_name"]
         print(f"\n=== {spec['label']} ===", flush=True)
         ok = _download_hf(spec["repo_id"], spec["filename"], dest)
+        if not ok and dest.exists() and dest.stat().st_size >= EXPECTED_MIN_BYTES:
+            print(f"  Using existing file: {dest}  ({dest.stat().st_size:,} bytes)", flush=True)
+            ok = True
         if ok:
             _verify(dest)
         else:
             any_failed = True
-            if spec["primary"]:
+            if spec.get("primary"):
                 print("  ERROR: primary model download failed.", file=sys.stderr)
 
     primary = MODELS_DIR / MODELS[0]["dest_name"]
+    fallback = MODELS_DIR / MODELS[1]["dest_name"]
     print("\n" + "=" * 60, flush=True)
-    if primary.exists():
+    if args.fallback_only:
+        if fallback.exists():
+            print(f"Fallback model ready: {fallback.resolve()}", flush=True)
+            print("Auto-discovered at startup as backend/ml/models/hansung_ppe.pt", flush=True)
+        else:
+            print("Fallback model NOT available. Check errors above.", file=sys.stderr)
+            sys.exit(1)
+    elif primary.exists():
         print(f"Primary model ready: {primary.resolve()}", flush=True)
-        print(f"\nSet in backend/.env:\n  YOLO_MODEL_PATH={primary.resolve()}", flush=True)
+        print(f"\nOptional .env:\n  YOLO_MODEL_PATH={primary.resolve()}", flush=True)
     else:
         print("Primary model NOT available. Check errors above.", file=sys.stderr)
         sys.exit(1)

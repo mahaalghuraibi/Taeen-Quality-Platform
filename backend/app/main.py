@@ -60,13 +60,14 @@ async def lifespan(_app: FastAPI):
     dish_model = (settings.DISH_GEMINI_MODEL or settings.GEMINI_VISION_MODEL or "").strip()
     demo_mode = settings.MONITORING_AI_DEMO_MODE
 
-    yolo_path = (settings.YOLO_MODEL_PATH or "").strip()
-    yolo_status = yolo_path if yolo_path else "NOT_CONFIGURED"
-    yolo_warning = "" if yolo_path else "  *** YOLO monitoring model missing ***"
+    from app.services.yolo_model_resolver import ensure_yolo_model_ready, startup_log_lines
+
+    yolo_resolved = ensure_yolo_model_ready()
+    yolo_warning = "" if yolo_resolved else "  *** YOLO monitoring model missing ***"
     waste_path = (settings.YOLO_WASTE_MODEL_PATH or "").strip()
     waste_status = waste_path if waste_path else "NOT_CONFIGURED"
-    startup_lines = [
-        f"  YOLO_MODEL_PATH={yolo_status}",
+    startup_lines = [f"  {line}" for line in startup_log_lines(yolo_resolved)]
+    startup_lines.extend([
         f"  YOLO_WASTE_MODEL_PATH={waste_status}",
         f"  DISH_GEMINI_API_KEY_set={dish_key_set}  source={dish_key_src}",
         f"  DISH_GEMINI_MODEL={dish_model or '(none)'}",
@@ -74,7 +75,15 @@ async def lifespan(_app: FastAPI):
         f"  MONITORING_GEMINI_MODEL={monitoring_model or '(none)'}  (unused)",
         f"  MONITORING_AI_DEMO_MODE={demo_mode}",
         f"  ROBOFLOW_KEY_set={bool(settings.ROBOFLOW_API_KEY.strip())}",
-    ]
+    ])
+    if yolo_resolved:
+        try:
+            from app.services.yolo_monitoring_service import _load_yolo
+
+            _load_yolo(yolo_resolved)
+            logger.info("YOLO warmup: model loaded successfully")
+        except Exception as exc:
+            logger.error("YOLO warmup: load failed — %s", exc)
     for line in startup_lines:
         logger.info(line.strip())
     if yolo_warning:
