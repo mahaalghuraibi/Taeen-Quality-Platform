@@ -4,8 +4,8 @@ export const DEFAULT_FETCH_TIMEOUT_MS = 45_000;
 /** Login / register / profile bootstrap (Render cold start can exceed 30s). */
 export const AUTH_FETCH_TIMEOUT_MS = import.meta.env.PROD ? 90_000 : 30_000;
 
-/** Monitoring frame analysis (YOLO on server — can be slow). */
-export const MONITORING_FETCH_TIMEOUT_MS = 90_000;
+/** Monitoring frame analysis (YOLO download + first inference on Render can be slow). */
+export const MONITORING_FETCH_TIMEOUT_MS = import.meta.env.PROD ? 180_000 : 90_000;
 
 /**
  * fetch() with AbortController timeout. Rejects with err.code === "TIMEOUT" on expiry.
@@ -41,6 +41,13 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_FE
 }
 
 /** User-facing Arabic message for failed network / timeout. */
+export function formatMonitoringFetchError(err, fallback = "تعذر تحليل الصورة أو تسجيل المخالفة.") {
+  if (err?.code === "TIMEOUT") {
+    return "انتهت مهلة التحليل. أول طلب بعد إيقاف الخادم قد يستغرق 1–3 دقائق (تحميل نموذج YOLO). حاول مرة أخرى.";
+  }
+  return formatFetchError(err, fallback);
+}
+
 export function formatFetchError(err, fallback = "تعذر الاتصال بالخادم.") {
   if (err?.code === "TIMEOUT") {
     return "انتهت مهلة الاتصال بالخادم. تحقق من الشبكة وحاول مرة أخرى.";

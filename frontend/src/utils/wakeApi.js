@@ -7,7 +7,7 @@ const WAKE_ATTEMPTS = 3;
 
 function healthUrl() {
   const base = (API_BASE_URL || PRODUCTION_API_ORIGIN).replace(/\/+$/, "");
-  return `${base}/`;
+  return `${base}/health`;
 }
 
 /**

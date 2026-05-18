@@ -188,3 +188,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 @app.get("/")
 def root() -> dict[str, str]:
     return {"message": getattr(settings, "PROJECT_NAME", "API")}
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    """Lightweight liveness probe — must stay fast (no YOLO / DB migrations)."""
+    return {"status": "ok"}

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -72,7 +73,9 @@ async def analyze_frame(
             detail="حجم الملف يتجاوز الحد المسموح للتحليل.",
         )
     try:
-        payload = analyze_monitoring_frame(
+        # YOLO inference + model download are CPU/IO heavy — never block the asyncio event loop.
+        payload = await asyncio.to_thread(
+            analyze_monitoring_frame,
             image_bytes=image_bytes,
             content_type=image.content_type,
             camera_name=(camera_name or "").strip() or None,

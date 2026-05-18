@@ -38,10 +38,13 @@ import { useExpandMoreList } from "../hooks/useExpandMoreList.js";
 import EmptyState from "../components/shared/EmptyState.jsx";
 import { PLATFORM_BRAND, dashboardTitleForRole } from "../constants/branding.js";
 import {
+  DEFAULT_FETCH_TIMEOUT_MS,
   MONITORING_FETCH_TIMEOUT_MS,
   fetchWithTimeout,
   formatFetchError,
+  formatMonitoringFetchError,
 } from "../utils/fetchWithTimeout.js";
+import { wakeApiBeforeAuth } from "../utils/wakeApi.js";
 import {
   STAFF_SECTION_IDS,
   SUPERVISOR_SECTION_IDS,
@@ -928,6 +931,8 @@ export default function Dashboard() {
   const [alertsList, setAlertsList] = useState([]);
   const [alertsLoading, setAlertsLoading] = useState(false);
   const [alertsError, setAlertsError] = useState("");
+  /** null = unknown, true/false from lightweight GET /health or /. */
+  const [apiReachable, setApiReachable] = useState(null);
   const [cameraTestFile, setCameraTestFile] = useState(null);
   const [cameraTestPreviewUrl, setCameraTestPreviewUrl] = useState("");
   const [cameraAnalyzeMode, setCameraAnalyzeMode] = useState("image");
@@ -1480,11 +1485,13 @@ export default function Dashboard() {
         ? `${Math.round(Number(supervisorSummary.compliance_rate))}%`
         : "—";
 
-  const monitoringHealthLine = alertsLoading
+  const monitoringHealthLine = alertsLoading || apiReachable === null
     ? "جاري التحقق…"
-    : alertsError
-      ? "تعذر التحقق من التنبيهات"
-      : "الاتصال بالخادم سليم";
+    : apiReachable === false
+      ? "الخادم لا يستجيب"
+      : alertsError
+        ? "تعذر تحميل التنبيهات"
+        : "الاتصال بالخادم سليم";
   const monitoringLiveLine =
     monitoringWebcamOn && monitoringLiveAutoOn ? "تحليل لقطات نشط" : "بدون تحليل تلقائي فوري";
 
@@ -2184,7 +2191,11 @@ export default function Dashboard() {
     setAlertsLoading(true);
     setAlertsError("");
     try {
-      const res = await fetch(SUPERVISOR_ALERTS_URL, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetchWithTimeout(
+        SUPERVISOR_ALERTS_URL,
+        { headers: { Authorization: `Bearer ${token}` } },
+        DEFAULT_FETCH_TIMEOUT_MS,
+      );
       const body = await res.json().catch(() => []);
       if (handleProtectedAuthFailure(res.status, body?.detail)) {
         setAlertsList([]);
@@ -2267,6 +2278,21 @@ export default function Dashboard() {
     void loadSupervisorCameras();
     void loadSupervisorAlerts();
   }, [role, loadSupervisorCameras, loadSupervisorAlerts]);
+
+  useEffect(() => {
+    if (!(role === "supervisor" || role === "admin")) {
+      setApiReachable(null);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      const ok = await wakeApiBeforeAuth();
+      if (!cancelled) setApiReachable(ok);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [role]);
 
   useEffect(() => {
     if (!(role === "supervisor" || role === "admin")) {
@@ -2376,6 +2402,18 @@ export default function Dashboard() {
   // Shared fetch helper used by image upload, video frames, and live 1 Hz monitoring.
   const callAnalyzeFrameEndpoint = useCallback(
     async (imageFile, token) => {
+      const apiReady = await wakeApiBeforeAuth();
+      if (!apiReady) {
+        return {
+          ok: false,
+          status: 0,
+          body: {
+            detail:
+              "الخادم لا يستجيب. انتظر دقيقة (قد يكون الباكند في وضع السكون على Render) ثم أعد المحاولة.",
+          },
+        };
+      }
+
       const fd = new FormData();
       fd.append("image", imageFile);
       if (monitoringCameraSelectId) {
@@ -2467,7 +2505,7 @@ export default function Dashboard() {
       void loadSupervisorSummary();
     } catch (err) {
       if (gen === liveGenRef.current) {
-        const msg = formatFetchError(err, "تعذر إكمال التحليل التلقائي.");
+        const msg = formatMonitoringFetchError(err, "تعذر إكمال التحليل التلقائي.");
         setLiveAnalysisError(msg);
         console.error("[Monitoring] live tick failed:", MONITORING_ANALYZE_URL, err);
       }
@@ -2560,7 +2598,7 @@ export default function Dashboard() {
       console.error("[Monitoring] manual webcam frame failed:", MONITORING_ANALYZE_URL, err);
       setToast({
         type: "error",
-        text: formatFetchError(err, "تعذر التقاط أو تحليل الصورة من الكاميرا."),
+        text: formatMonitoringFetchError(err, "تعذر التقاط أو تحليل الصورة من الكاميرا."),
       });
     } finally {
       setMonitoringWebcamBusy(false);
@@ -2602,7 +2640,7 @@ export default function Dashboard() {
       console.error("[Monitoring] image upload analyze failed:", MONITORING_ANALYZE_URL, err);
       setToast({
         type: "error",
-        text: formatFetchError(err, "فشل تحليل الصورة. تحقق من إعدادات الذكاء الاصطناعي."),
+        text: formatMonitoringFetchError(err, "فشل تحليل الصورة. تحقق من إعدادات الذكاء الاصطناعي."),
       });
     } finally {
       setMonitoringAnalyzeLoading(false);
