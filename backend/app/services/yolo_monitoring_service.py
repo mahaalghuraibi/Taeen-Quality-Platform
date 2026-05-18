@@ -397,7 +397,7 @@ def _load_yolo(model_path: str) -> Any:
             _YOLO_MODEL_CACHE[model_path] = model
             if model_path not in _YOLO_LOADED_PATHS:
                 _YOLO_LOADED_PATHS.add(model_path)
-                logger.info("YOLO model loaded once path=%s device=cpu", model_path)
+                logger.info("YOLO model loaded successfully path=%s device=cpu", model_path)
             return model
         except FileNotFoundError:
             raise ValueError(

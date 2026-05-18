@@ -9,9 +9,9 @@ services:
     name: taeen-backend
     runtime: python
     rootDir: backend
-    buildCommand: pip install -r requirements.txt && python ml/download_ppe_model.py --fallback-only
+    buildCommand: pip install -r requirements.txt
     startCommand: bash scripts/start_render.sh
-    preDeployCommand: python ml/download_ppe_model.py --fallback-only && python scripts/create_admin.py
+    preDeployCommand: python scripts/create_admin.py
     envVars:
       - key: ENVIRONMENT
         value: production

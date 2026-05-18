@@ -16,5 +16,5 @@ python ml/download_ppe_model.py              # both models
 python ml/download_ppe_model.py --fallback-only  # Render / CI
 ```
 
-**Production (Render):** `render.yaml` runs `--fallback-only` during build.  
-Startup also auto-downloads `hansung_ppe.pt` if missing (`YOLO_AUTO_DOWNLOAD=true` by default in production).
+**Production (Render):** weights are **not** downloaded during build (avoids build network failures).  
+The first `analyze-frame` request downloads `hansung_ppe.pt` at runtime into this folder (`YOLO_AUTO_DOWNLOAD=true`).
