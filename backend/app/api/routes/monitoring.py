@@ -15,6 +15,7 @@ from app.models.monitoring_alert import MonitoringAlert
 from app.models.user import User
 from app.schemas.monitoring import MonitoringAnalyzeResponse, MonitoringCheckOut, MonitoringViolationOut
 from app.services.monitoring_ai_service import analyze_monitoring_frame, monitoring_image_snapshot
+from app.services.yolo_monitoring_service import YOLO_BUSY_MESSAGE
 
 router = APIRouter(
     prefix="/monitoring",
@@ -23,6 +24,19 @@ router = APIRouter(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _skipped_busy_response() -> MonitoringAnalyzeResponse:
+    """Live mode: previous frame still running — drop this frame without error UI."""
+    return MonitoringAnalyzeResponse(
+        ok=True,
+        status="skipped_busy",
+        provider="yolo",
+        checks=[],
+        violations=[],
+        alerts_created=0,
+        summary="تم تخطي الإطار — التحليل السابق ما زال قيد المعالجة.",
+    )
 
 
 def _ensure_supervisor_branch(current_user: User) -> None:
@@ -61,6 +75,7 @@ async def analyze_frame(
     camera_id: int | None = Form(None),
     camera_name: str | None = Form(None),
     location: str | None = Form(None),
+    analysis_mode: str = Form("manual"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MonitoringAnalyzeResponse:
@@ -72,6 +87,8 @@ async def analyze_frame(
             status_code=413,
             detail="حجم الملف يتجاوز الحد المسموح للتحليل.",
         )
+    mode = (analysis_mode or "manual").strip().lower()
+    live_mode = mode == "live"
     try:
         # YOLO inference + model download are CPU/IO heavy — never block the asyncio event loop.
         payload = await asyncio.to_thread(
@@ -80,9 +97,12 @@ async def analyze_frame(
             content_type=image.content_type,
             camera_name=(camera_name or "").strip() or None,
             location=(location or "").strip() or None,
+            wait_for_slot=not live_mode,
         )
     except ValueError as exc:
         msg = str(exc)
+        if msg == YOLO_BUSY_MESSAGE and live_mode:
+            return _skipped_busy_response()
         if "الصورة غير صالحة" in msg:
             raise HTTPException(status_code=400, detail=msg) from exc
         # YOLO / dependency / configuration failures → 503 with the Arabic detail.
@@ -139,7 +159,7 @@ async def analyze_frame(
             pin_int = None
         dedupe_key = (vtype, pin_int)
         # Finalize_payload already applies per-type thresholds; this is only a hard junk floor (noise < ~37%).
-        if not vtype or vconf < 37:
+        if not vtype or vconf < 32:
             continue
         if dedupe_key in inserted_keys:
             continue

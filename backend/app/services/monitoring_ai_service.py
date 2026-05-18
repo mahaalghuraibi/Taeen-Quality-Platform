@@ -651,6 +651,7 @@ def analyze_monitoring_frame(
     content_type: str | None,
     camera_name: str | None,
     location: str | None,
+    wait_for_slot: bool = True,
 ) -> dict[str, Any]:
     logger.info(
         "analyze_monitoring_frame: content_type=%s bytes=%d",
@@ -676,4 +677,4 @@ def analyze_monitoring_frame(
 
     from app.services.yolo_monitoring_service import analyze_frame_yolo  # noqa: PLC0415
 
-    return analyze_frame_yolo(image_bytes, camera_name, location)
+    return analyze_frame_yolo(image_bytes, camera_name, location, wait_for_slot=wait_for_slot)

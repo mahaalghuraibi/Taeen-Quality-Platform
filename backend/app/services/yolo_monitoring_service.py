@@ -47,8 +47,10 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 logger = logging.getLogger(__name__)
 
-_YOLO_BUSY_MESSAGE = "التحليل السابق ما زال قيد المعالجة"
+YOLO_BUSY_MESSAGE = "التحليل السابق ما زال قيد المعالجة"
+_YOLO_BUSY_MESSAGE = YOLO_BUSY_MESSAGE
 _YOLO_INFERENCE_LOCK = threading.Lock()
+_YOLO_LOCK_WAIT_SEC = max(30, int(os.getenv("YOLO_LOCK_WAIT_SEC", "180")))
 _YOLO_LOAD_LOCK = threading.Lock()
 _YOLO_LOADED_PATHS: set[str] = set()
 
@@ -425,8 +427,17 @@ def _release_yolo_inference_memory() -> None:
 
 
 @contextmanager
-def _yolo_analysis_slot() -> Iterator[None]:
-    if not _YOLO_INFERENCE_LOCK.acquire(blocking=False):
+def _yolo_analysis_slot(*, wait: bool = True) -> Iterator[None]:
+    """
+    Serialize YOLO inference (one frame at a time on CPU).
+    wait=True: block until slot free (manual / upload analysis).
+    wait=False: fail fast when busy (live stream drops frame instead of queueing).
+    """
+    if wait:
+        acquired = _YOLO_INFERENCE_LOCK.acquire(blocking=True, timeout=_YOLO_LOCK_WAIT_SEC)
+        if not acquired:
+            raise ValueError("انتهت مهلة انتظار التحليل. حاول مرة أخرى بعد قليل.")
+    elif not _YOLO_INFERENCE_LOCK.acquire(blocking=False):
         raise ValueError(_YOLO_BUSY_MESSAGE)
     try:
         yield
@@ -1541,11 +1552,13 @@ def analyze_frame_yolo(
     image_bytes: bytes,
     camera_name: str | None,
     location: str | None,
+    *,
+    wait_for_slot: bool = True,
 ) -> dict[str, Any]:
     if not settings.YOLO_ENABLED:
         raise ValueError("YOLO is disabled (YOLO_ENABLED=false).")
 
-    with _yolo_analysis_slot():
+    with _yolo_analysis_slot(wait=wait_for_slot):
         payload = _analyze_frame_yolo_core(image_bytes, camera_name, location)
         logger.info("YOLO inference finished camera=%s", camera_name or "—")
         return payload

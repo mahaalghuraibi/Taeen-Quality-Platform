@@ -43,6 +43,11 @@ import {
   fetchWithTimeout,
   formatMonitoringFetchError,
 } from "../utils/fetchWithTimeout.js";
+import {
+  isMonitoringAnalyzeSuccess,
+  isMonitoringSkippedResponse,
+  LIVE_ANALYSIS_GAP_MS,
+} from "../utils/monitoringApi.js";
 import { wakeApiBeforeAuth } from "../utils/wakeApi.js";
 import {
   STAFF_SECTION_IDS,
@@ -958,7 +963,7 @@ export default function Dashboard() {
   const livePrevKitchenRef = useRef(null);
   const livePrevStorageRef = useRef(null);
   const livePrevPrepRef = useRef(null);
-  const liveAnalysisIntervalRef = useRef(null);
+  const liveAnalysisScheduleRef = useRef(null);
   const liveAnalysisInFlightRef = useRef(false);
   const liveGenRef = useRef(0);
   const liveAlertsThrottleRef = useRef(0);
@@ -2400,11 +2405,12 @@ export default function Dashboard() {
 
   // Shared fetch helper used by image upload, video frames, and live 1 Hz monitoring.
   const callAnalyzeFrameEndpoint = useCallback(
-    async (imageFile, token) => {
+    async (imageFile, token, { analysisMode = "manual" } = {}) => {
       await wakeApiBeforeAuth();
 
       const fd = new FormData();
       fd.append("image", imageFile);
+      fd.append("analysis_mode", analysisMode === "live" ? "live" : "manual");
       if (monitoringCameraSelectId) {
         const idNum = Number(monitoringCameraSelectId);
         if (Number.isFinite(idNum)) fd.append("camera_id", String(idNum));
@@ -2457,10 +2463,11 @@ export default function Dashboard() {
       const blob = await captureLiveMonitoringBlob(video);
       if (!blob || gen !== liveGenRef.current) return;
       const file = new File([blob], `live-${Date.now()}.jpg`, { type: "image/jpeg" });
-      const { ok, status, body } = await callAnalyzeFrameEndpoint(file, token);
+      const { ok, status, body } = await callAnalyzeFrameEndpoint(file, token, { analysisMode: "live" });
       if (gen !== liveGenRef.current) return;
       if (handleProtectedAuthFailure(status, body?.detail)) return;
-      if (!ok) {
+      if (isMonitoringSkippedResponse(status, body)) return;
+      if (!isMonitoringAnalyzeSuccess(status, body)) {
         const errDetail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : null;
         const msg = errDetail || `فشل التحليل التلقائي (${status || "—"}).`;
         setLiveAnalysisError(msg);
@@ -2501,6 +2508,15 @@ export default function Dashboard() {
     } finally {
       liveAnalysisInFlightRef.current = false;
       setLiveTickBusy(false);
+      if (monitoringLiveAutoOn && monitoringWebcamOn && gen === liveGenRef.current) {
+        if (liveAnalysisScheduleRef.current != null) {
+          clearTimeout(liveAnalysisScheduleRef.current);
+        }
+        liveAnalysisScheduleRef.current = window.setTimeout(
+          () => void tickLiveMonitoringAnalysis(),
+          LIVE_ANALYSIS_GAP_MS,
+        );
+      }
     }
   }, [
     role,
@@ -2527,18 +2543,18 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!monitoringLiveAutoOn || !monitoringWebcamOn) {
-      if (liveAnalysisIntervalRef.current != null) {
-        clearInterval(liveAnalysisIntervalRef.current);
-        liveAnalysisIntervalRef.current = null;
+      if (liveAnalysisScheduleRef.current != null) {
+        clearTimeout(liveAnalysisScheduleRef.current);
+        liveAnalysisScheduleRef.current = null;
       }
       return undefined;
     }
-    const id = window.setInterval(() => void tickLiveMonitoringAnalysis(), 1000);
-    liveAnalysisIntervalRef.current = id;
     void tickLiveMonitoringAnalysis();
     return () => {
-      clearInterval(id);
-      liveAnalysisIntervalRef.current = null;
+      if (liveAnalysisScheduleRef.current != null) {
+        clearTimeout(liveAnalysisScheduleRef.current);
+        liveAnalysisScheduleRef.current = null;
+      }
     };
   }, [monitoringLiveAutoOn, monitoringWebcamOn, tickLiveMonitoringAnalysis]);
 
@@ -2567,9 +2583,9 @@ export default function Dashboard() {
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
       if (!blob) throw new Error("no_blob");
       const file = new File([blob], "device-camera.jpg", { type: "image/jpeg" });
-      const { ok, status, body } = await callAnalyzeFrameEndpoint(file, token);
+      const { ok, status, body } = await callAnalyzeFrameEndpoint(file, token, { analysisMode: "manual" });
       if (handleProtectedAuthFailure(status, body?.detail)) return;
-      if (!ok) {
+      if (!isMonitoringAnalyzeSuccess(status, body)) {
         const errDetail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : null;
         setToast({ type: "error", text: errDetail || "فشل تحليل اللقطة." });
         return;
@@ -2604,9 +2620,11 @@ export default function Dashboard() {
     }
     setMonitoringAnalyzeLoading(true);
     try {
-      const { ok, status, body } = await callAnalyzeFrameEndpoint(cameraTestFile, token);
+      const { ok, status, body } = await callAnalyzeFrameEndpoint(cameraTestFile, token, {
+        analysisMode: "manual",
+      });
       if (handleProtectedAuthFailure(status, body?.detail)) return;
-      if (!ok) {
+      if (!isMonitoringAnalyzeSuccess(status, body)) {
         const errDetail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : null;
         if (status === 503) {
           setToast({ type: "error", text: errDetail || "تعذر تحليل الصورة. تحقق من إعدادات الذكاء الاصطناعي أو فعّل وضع التجريبي." });
@@ -2722,12 +2740,14 @@ export default function Dashboard() {
         const frameUrl = URL.createObjectURL(frameBlob);
         const frameFile = new File([frameBlob], `video-frame-${Math.round(t * 1000)}.jpg`, { type: "image/jpeg" });
         // Use the same endpoint/FormData/auth as the working single-image upload.
-        const { ok, status, body } = await callAnalyzeFrameEndpoint(frameFile, token);
+        const { ok, status, body } = await callAnalyzeFrameEndpoint(frameFile, token, {
+          analysisMode: "manual",
+        });
         if (handleProtectedAuthFailure(status, body?.detail)) {
           URL.revokeObjectURL(url);
           return;
         }
-        if (!ok) {
+        if (!isMonitoringAnalyzeSuccess(status, body)) {
           if (!apiErrorShown) {
             apiErrorShown = true;
             const errDetail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : null;
@@ -3116,9 +3136,9 @@ export default function Dashboard() {
     setMonitoringWebcamBusy(false);
     setLiveAnalysisError("");
     if (stopAuto) setMonitoringLiveAutoOn(false);
-    if (liveAnalysisIntervalRef.current != null) {
-      clearInterval(liveAnalysisIntervalRef.current);
-      liveAnalysisIntervalRef.current = null;
+    if (liveAnalysisScheduleRef.current != null) {
+      clearTimeout(liveAnalysisScheduleRef.current);
+      liveAnalysisScheduleRef.current = null;
     }
   }, []);
 
@@ -4141,7 +4161,7 @@ export default function Dashboard() {
                   <div className="mt-4 rounded-xl border border-emerald-500/25 bg-[#041014]/80 p-4">
                     <p className="mb-2 text-sm font-semibold text-emerald-100">مراقبة مباشرة — كاميرا الجهاز</p>
                     <p className="mb-3 text-[11px] leading-relaxed text-slate-400">
-                      يبقى البث مفتوحاً طوال الجلسة؛ التحليل التلقائي يرسل إطار JPEG مضغوطاً كل ثانية إلى نفس مسار الخادم.
+                      يبقى البث مفتوحاً طوال الجلسة؛ التحليل التلقائي يرسل إطاراً كل ~10 ثوانٍ بعد اكتمال تحليل YOLO على الخادم (أول لقطة قد تستغرق 1–3 دقائق).
                       المعاينة الحالية تُعرض على المناطق الثلاث حتى يُربط لاحقاً بث RTSP/IP منفصل لكل بطاقة دون تغيير الواجهة.
                     </p>
                     <LiveMonitoringZoneCards
@@ -4188,7 +4208,7 @@ export default function Dashboard() {
                         onClick={() => setMonitoringLiveAutoOn(true)}
                         className="rounded-xl border border-violet-500/40 bg-violet-500/15 px-4 py-2 text-xs font-semibold text-violet-100 disabled:opacity-40"
                       >
-                        بدء التحليل المباشر (كل 1 ث)
+                        بدء التحليل المباشر (YOLO)
                       </button>
                       <button
                         type="button"
@@ -4218,7 +4238,7 @@ export default function Dashboard() {
                     </div>
                     {monitoringLiveAutoOn && monitoringWebcamOn ? (
                       <p className="mb-2 text-[11px] text-emerald-200/90">
-                        التحليل التلقائي نشط — يُرسل إطاراً كل ثانية بعد اكتمال الطلب السابق.
+                        التحليل التلقائي نشط — إطار جديد كل ~10 ثوانٍ بعد اكتمال YOLO. للتسجيل الفوري استخدم «تحليل لقطة يدوي».
                       </p>
                     ) : null}
                     {liveAnalysisError ? (
