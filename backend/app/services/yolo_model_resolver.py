@@ -26,9 +26,10 @@ PRIMARY_MODEL_FILENAME = "keremberk_ppe.pt"
 FALLBACK_MODEL_FILENAME = "hansung_ppe.pt"
 PERSON_MODEL_FILENAME = "yolov8n.pt"
 
+# Lightweight hansung (YOLOv8n) first — lower RAM on Render free tier.
 PREFERRED_PPE_FILENAMES = (
-    PRIMARY_MODEL_FILENAME,
     FALLBACK_MODEL_FILENAME,
+    PRIMARY_MODEL_FILENAME,
     "best.pt",
 )
 

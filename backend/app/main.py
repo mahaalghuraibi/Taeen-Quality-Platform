@@ -60,10 +60,14 @@ async def lifespan(_app: FastAPI):
     dish_model = (settings.DISH_GEMINI_MODEL or settings.GEMINI_VISION_MODEL or "").strip()
     demo_mode = settings.MONITORING_AI_DEMO_MODE
 
-    from app.services.yolo_model_resolver import ensure_yolo_model_ready, startup_log_lines
+    from app.services.yolo_model_resolver import resolve_yolo_model_path, startup_log_lines
 
-    yolo_resolved = ensure_yolo_model_ready()
-    yolo_warning = "" if yolo_resolved else "  *** YOLO monitoring model missing ***"
+    yolo_resolved = resolve_yolo_model_path(allow_download=False)
+    yolo_warning = (
+        ""
+        if yolo_resolved
+        else "  *** YOLO weights not on disk yet (lazy load on first analyze-frame) ***"
+    )
     waste_path = (settings.YOLO_WASTE_MODEL_PATH or "").strip()
     waste_status = waste_path if waste_path else "NOT_CONFIGURED"
     startup_lines = [f"  {line}" for line in startup_log_lines(yolo_resolved)]
@@ -76,14 +80,7 @@ async def lifespan(_app: FastAPI):
         f"  MONITORING_AI_DEMO_MODE={demo_mode}",
         f"  ROBOFLOW_KEY_set={bool(settings.ROBOFLOW_API_KEY.strip())}",
     ])
-    if yolo_resolved:
-        try:
-            from app.services.yolo_monitoring_service import _load_yolo
-
-            _load_yolo(yolo_resolved)
-            logger.info("YOLO warmup: model loaded successfully")
-        except Exception as exc:
-            logger.error("YOLO warmup: load failed — %s", exc)
+    logger.info("  YOLO_ENABLED=%s (lazy load — no warmup at startup)", settings.YOLO_ENABLED)
     for line in startup_lines:
         logger.info(line.strip())
     if yolo_warning:

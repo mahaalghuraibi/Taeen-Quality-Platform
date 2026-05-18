@@ -29,17 +29,28 @@ Head-cover (no_headcover) false-positive control (YOLO path only):
 """
 from __future__ import annotations
 
+import gc
 import io
 import logging
 import math
+import os
 import threading
 from collections import Counter
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from app.core.config import settings
 
+# Force CPU-only for Ultralytics/torch (Render free tier has no GPU).
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+
 logger = logging.getLogger(__name__)
+
+_YOLO_BUSY_MESSAGE = "التحليل السابق ما زال قيد المعالجة"
+_YOLO_INFERENCE_LOCK = threading.Lock()
+_YOLO_LOAD_LOCK = threading.Lock()
+_YOLO_LOADED_PATHS: set[str] = set()
 
 _BIN_CANDIDATE_KEY = "bin_candidate"
 
@@ -255,9 +266,8 @@ _VIOLATION_THRESHOLDS_INT: dict[str, int] = {
 }
 
 _TILE_SIZE: int = 640
-_TILE_OVERLAP: int = 160
-_TARGET_LONG_EDGE: int = 960
-_MAX_LONG_EDGE: int = 1920
+_TILE_OVERLAP: int = 128
+_YOLO_MAX_EDGE: int = int(getattr(settings, "YOLO_MAX_EDGE", 640) or 640)
 _MIN_CLUSTER_AREA_FRAC: float = 0.00006
 
 _FLOOR_CY_MIN: float = 0.46
@@ -328,6 +338,8 @@ def _resolve_person_model_path() -> str | None:
     Absolute/local path or Ultralytics hub weights id (e.g. yolov8n.pt — may auto-download).
     None => skip separate person detector; use PPE-model person classes as today.
     """
+    if not settings.YOLO_USE_PERSON_DETECTOR:
+        return None
     configured = (settings.PERSON_MODEL_PATH or "").strip()
     backend_root = Path(__file__).resolve().parents[2]
     if configured:
@@ -344,39 +356,83 @@ def _resolve_person_model_path() -> str | None:
     return "yolov8n.pt"
 
 
+def _yolo_imgsz_for_image(width: int, height: int) -> int:
+    long_edge = min(max(width, height), _YOLO_MAX_EDGE)
+    return max(32, int(math.ceil(long_edge / 32.0) * 32))
+
+
+def _yolo_predict_cpu(model: Any, image: Any, *, conf: float, classes: list[int] | None = None) -> Any:
+    w, h = image.size
+    kwargs: dict[str, Any] = {
+        "verbose": False,
+        "conf": conf,
+        "device": "cpu",
+        "half": False,
+        "imgsz": _yolo_imgsz_for_image(w, h),
+    }
+    if classes is not None:
+        kwargs["classes"] = classes
+    return model.predict(image, **kwargs)
+
+
 def _load_yolo(model_path: str) -> Any:
     if model_path in _YOLO_MODEL_CACHE:
         return _YOLO_MODEL_CACHE[model_path]
 
-    try:
-        from ultralytics import YOLO
-    except ImportError:
-        raise ValueError(
-            "مكتبة ultralytics غير مثبتة. "
-            "في مجلد backend نفّذ: pip install ultralytics"
-        ) from None
+    with _YOLO_LOAD_LOCK:
+        if model_path in _YOLO_MODEL_CACHE:
+            return _YOLO_MODEL_CACHE[model_path]
 
-    try:
-        model = YOLO(model_path)
-        _YOLO_MODEL_CACHE[model_path] = model
-        logger.info("YOLO model loaded: %s", model_path)
-        return model
-    except FileNotFoundError:
-        raise ValueError(
-            f"ملف نموذج YOLO غير موجود: {model_path}. "
-            "تحقق من مسار الملف في backend/.env"
-        ) from None
-    except Exception as exc:
-        raise ValueError(f"فشل تحميل نموذج YOLO: {exc}") from exc
+        try:
+            from ultralytics import YOLO
+        except ImportError:
+            raise ValueError(
+                "مكتبة ultralytics غير مثبتة. "
+                "في مجلد backend نفّذ: pip install ultralytics"
+            ) from None
+
+        try:
+            model = YOLO(model_path)
+            model.to("cpu")
+            _YOLO_MODEL_CACHE[model_path] = model
+            if model_path not in _YOLO_LOADED_PATHS:
+                _YOLO_LOADED_PATHS.add(model_path)
+                logger.info("YOLO model loaded once path=%s device=cpu", model_path)
+            return model
+        except FileNotFoundError:
+            raise ValueError(
+                f"ملف نموذج YOLO غير موجود: {model_path}. "
+                "تحقق من مسار الملف في backend/.env"
+            ) from None
+        except Exception as exc:
+            raise ValueError(f"فشل تحميل نموذج YOLO: {exc}") from exc
 
 
 def _get_yolo_model() -> Any:
+    if not settings.YOLO_ENABLED:
+        raise ValueError("YOLO is disabled (YOLO_ENABLED=false).")
+
     from app.services.yolo_model_resolver import missing_model_user_message, resolve_yolo_model_path
 
     model_path = resolve_yolo_model_path(allow_download=True)
     if not model_path:
         raise ValueError(missing_model_user_message())
     return _load_yolo(model_path)
+
+
+def _release_yolo_inference_memory() -> None:
+    gc.collect()
+
+
+@contextmanager
+def _yolo_analysis_slot() -> Iterator[None]:
+    if not _YOLO_INFERENCE_LOCK.acquire(blocking=False):
+        raise ValueError(_YOLO_BUSY_MESSAGE)
+    try:
+        yield
+    finally:
+        _release_yolo_inference_memory()
+        _YOLO_INFERENCE_LOCK.release()
 
 
 def _resolve_aux_waste_model_path() -> str:
@@ -415,7 +471,7 @@ def _run_aux_waste_scene_detections(model_path: str, pil_rgb: Any, img_w: int, i
     tiles = _tiles_from_image(pil_rgb, img_w, img_h)
     for tile_img, x_off, y_off, cw, ch in tiles:
         try:
-            results = model(tile_img, verbose=False, conf=_YOLO_CONF_WASTE)
+            results = _yolo_predict_cpu(model, tile_img, conf=_YOLO_CONF_WASTE)
         except Exception as exc:
             logger.warning("YOLO waste tile (%d,%d) failed: %s", x_off, y_off, exc)
             continue
@@ -622,15 +678,11 @@ def _infer_coco_person_boxes(pil_rgb: Any) -> tuple[list[tuple[list[float], int]
         return [], False, None, 0
 
     try:
-        w, h = pil_rgb.size
-        long_edge = max(w, h)
-        imgsz = int(math.ceil(long_edge / 32.0) * 32)
-        res = model.predict(
+        res = _yolo_predict_cpu(
+            model,
             pil_rgb,
-            verbose=False,
             conf=_PERSON_DETECT_CONF_FLOAT,
             classes=[_COCO_PERSON_CLASS_ID],
-            imgsz=imgsz,
         )
     except Exception as exc:
         logger.warning("person_model_failed predict src=%s error=%s", resolved, exc)
@@ -768,17 +820,14 @@ def _gloves_visibility_ok(vis: dict[str, bool], cluster: list[dict[str, Any]], b
     return False
 
 
-def _resize_image_aspect(img: Any, target_long: int, max_long: int) -> tuple[Any, int, int]:
+def _resize_image_for_inference(img: Any) -> tuple[Any, int, int]:
+    """Downscale only — longest side capped at YOLO_MAX_EDGE (default 640)."""
     from PIL import Image as PILImage
 
     w, h = img.size
     long_edge = max(w, h)
-    scale = 1.0
-    if long_edge < target_long:
-        scale = target_long / long_edge
-    elif long_edge > max_long:
-        scale = max_long / long_edge
-    if scale != 1.0:
+    if long_edge > _YOLO_MAX_EDGE:
+        scale = _YOLO_MAX_EDGE / long_edge
         nw = max(1, int(round(w * scale)))
         nh = max(1, int(round(h * scale)))
         img = img.resize((nw, nh), PILImage.Resampling.LANCZOS)
@@ -1369,7 +1418,7 @@ def _run_yolo_inference(
     except Exception as exc:
         raise ValueError("الصورة غير صالحة.") from exc
 
-    img, img_w, img_h = _resize_image_aspect(img, _TARGET_LONG_EDGE, _MAX_LONG_EDGE)
+    img, img_w, img_h = _resize_image_for_inference(img)
     pil_rgb = img
 
     person_pd_merged, person_det_ok, person_src, person_raw_n = _infer_coco_person_boxes(pil_rgb)
@@ -1384,11 +1433,11 @@ def _run_yolo_inference(
     for tile_img, x_off, y_off, cw, ch in tiles:
         all_runs: list[tuple[float, Any]] = []
         try:
-            all_runs.append((_YOLO_CONF, model(tile_img, verbose=False, conf=_YOLO_CONF)))
+            all_runs.append((_YOLO_CONF, _yolo_predict_cpu(model, tile_img, conf=_YOLO_CONF)))
         except Exception as exc:
             logger.warning("YOLO primary tile (%d,%d) failed: %s", x_off, y_off, exc)
         try:
-            all_runs.append((_YOLO_CONF_RECALL, model(tile_img, verbose=False, conf=_YOLO_CONF_RECALL)))
+            all_runs.append((_YOLO_CONF_RECALL, _yolo_predict_cpu(model, tile_img, conf=_YOLO_CONF_RECALL)))
         except Exception as exc:
             logger.warning("YOLO recall tile (%d,%d) failed: %s", x_off, y_off, exc)
         if not all_runs:
@@ -1493,17 +1542,34 @@ def analyze_frame_yolo(
     camera_name: str | None,
     location: str | None,
 ) -> dict[str, Any]:
+    if not settings.YOLO_ENABLED:
+        raise ValueError("YOLO is disabled (YOLO_ENABLED=false).")
+
+    with _yolo_analysis_slot():
+        payload = _analyze_frame_yolo_core(image_bytes, camera_name, location)
+        logger.info("YOLO inference finished camera=%s", camera_name or "—")
+        return payload
+
+
+def _analyze_frame_yolo_core(
+    image_bytes: bytes,
+    camera_name: str | None,
+    location: str | None,
+) -> dict[str, Any]:
     from datetime import datetime, timezone
 
     from app.services.monitoring_ai_service import VIOLATION_TYPE_LABELS, _finalize_payload  # noqa: PLC0415
 
     logger.info(
-        "analyze_frame_yolo: bytes=%d camera=%s location=%s",
-        len(image_bytes), camera_name or "—", location or "—",
+        "YOLO inference started bytes=%d camera=%s location=%s max_edge=%d",
+        len(image_bytes),
+        camera_name or "—",
+        location or "—",
+        _YOLO_MAX_EDGE,
     )
 
-    ppe_flat, scene_flat, person_boxes, iw, ih, raw_person_hits, pil_rgb, person_confs, yolo_diag = _run_yolo_inference(
-        image_bytes,
+    ppe_flat, scene_flat, person_boxes, iw, ih, raw_person_hits, pil_rgb, person_confs, yolo_diag = (
+        _run_yolo_inference(image_bytes)
     )
 
     waste_path = _resolve_aux_waste_model_path()

@@ -671,13 +671,8 @@ def analyze_monitoring_frame(
     if settings.MONITORING_AI_DEMO_MODE:
         return _analyze_demo(camera_name, location)
 
-    from app.services.yolo_model_resolver import ensure_yolo_model_ready
-
-    if not ensure_yolo_model_ready():
-        raise ValueError(
-            "YOLO model not configured. جارٍ تحميل النموذج على الخادم — "
-            "أعد المحاولة بعد دقيقة أو أعد نشر backend على Render."
-        )
+    if not settings.YOLO_ENABLED:
+        raise ValueError("YOLO is disabled (YOLO_ENABLED=false).")
 
     from app.services.yolo_monitoring_service import analyze_frame_yolo  # noqa: PLC0415
 

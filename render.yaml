@@ -19,3 +19,9 @@ services:
         value: "3.11.9"
       - key: YOLO_AUTO_DOWNLOAD
         value: "true"
+      - key: YOLO_ENABLED
+        value: "true"
+      - key: YOLO_MAX_EDGE
+        value: "640"
+      - key: YOLO_USE_PERSON_DETECTOR
+        value: "false"

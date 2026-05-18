@@ -80,7 +80,12 @@ class Settings:
         "MONITORING_GEMINI_MODEL",
         os.getenv("GEMINI_VISION_MODEL", "gemini-2.0-flash"),
     )
+    YOLO_ENABLED: bool = _parse_bool_env("YOLO_ENABLED", True)
     YOLO_MODEL_PATH: str = os.getenv("YOLO_MODEL_PATH", "")
+    # Longest image side sent to YOLO (downscale only). Lower = less RAM on Render free tier.
+    YOLO_MAX_EDGE: int = max(320, min(1280, int(os.getenv("YOLO_MAX_EDGE", "640"))))
+    # Second YOLO for COCO person boxes doubles memory — off by default in production.
+    YOLO_USE_PERSON_DETECTOR: bool = _parse_bool_env("YOLO_USE_PERSON_DETECTOR", False)
     # Standard COCO person detector (yolov8n/s); worker localization separate from PPE weights.
     # Default: backend/ml/models/yolov8n.pt if present, else Ultralytics auto-download "yolov8n.pt".
     PERSON_MODEL_PATH: str = os.getenv("PERSON_MODEL_PATH", "").strip()
