@@ -111,13 +111,7 @@ export default function LoginPage() {
     setLoading(true);
     const loginUrl = apiUrl("/api/v1/auth/login");
     try {
-      const apiReady = await wakeApiBeforeAuth();
-      if (!apiReady) {
-        setError(
-          "الخادم لا يستجيب حالياً. انتظر دقيقة (قد يكون في وضع السكون على Render) ثم أعد المحاولة.",
-        );
-        return;
-      }
+      await wakeApiBeforeAuth();
 
       const body = buildLoginFormBody(loginId, password);
 

@@ -189,13 +189,7 @@ export default function RegisterPage() {
     setLoading(true);
     const registerUrl = apiUrl("/api/v1/auth/users");
     try {
-      const apiReady = await wakeApiBeforeAuth();
-      if (!apiReady) {
-        setError(
-          "الخادم لا يستجيب حالياً. انتظر دقيقة (قد يكون في وضع السكون على Render) ثم أعد المحاولة.",
-        );
-        return;
-      }
+      await wakeApiBeforeAuth();
 
       const payload = buildRegisterPayload({
         email: safeEmail,

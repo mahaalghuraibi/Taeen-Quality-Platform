@@ -2401,17 +2401,7 @@ export default function Dashboard() {
   // Shared fetch helper used by image upload, video frames, and live 1 Hz monitoring.
   const callAnalyzeFrameEndpoint = useCallback(
     async (imageFile, token) => {
-      const apiReady = await wakeApiBeforeAuth();
-      if (!apiReady) {
-        return {
-          ok: false,
-          status: 0,
-          body: {
-            detail:
-              "الخادم لا يستجيب. انتظر دقيقة (قد يكون الباكند في وضع السكون على Render) ثم أعد المحاولة.",
-          },
-        };
-      }
+      await wakeApiBeforeAuth();
 
       const fd = new FormData();
       fd.append("image", imageFile);
