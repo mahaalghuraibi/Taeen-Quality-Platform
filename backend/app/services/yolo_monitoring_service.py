@@ -43,10 +43,29 @@ from typing import Any, Iterator
 
 from app.core.config import settings
 
-# Force CPU-only for Ultralytics/torch (Render free tier has no GPU).
+# Force CPU-only for Ultralytics/torch (no GPU on Railway/Render free tier).
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+# Prevent torch/OpenBLAS from spawning multiple threads — saves RAM on single-worker services.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 logger = logging.getLogger(__name__)
+
+# Pre-load libc malloc_trim so we can return freed heap to the OS after each inference.
+# Only available on Linux (Railway / Docker / Render). Silently skipped on macOS/Windows.
+_LIBC_MALLOC_TRIM: Any = None
+try:
+    import ctypes as _ctypes
+    _lib = _ctypes.CDLL("libc.so.6")
+    _LIBC_MALLOC_TRIM = _lib.malloc_trim
+    _LIBC_MALLOC_TRIM.restype = _ctypes.c_int
+    _LIBC_MALLOC_TRIM.argtypes = [_ctypes.c_size_t]
+    logger.debug("libc.malloc_trim available — memory will be trimmed after each inference.")
+except Exception:
+    logger.debug("libc.malloc_trim not available on this platform — relying on gc.collect() only.")
 
 YOLO_BUSY_MESSAGE = "التحليل السابق ما زال قيد المعالجة"
 _YOLO_BUSY_MESSAGE = YOLO_BUSY_MESSAGE
@@ -395,9 +414,17 @@ def _load_yolo(model_path: str) -> Any:
             ) from None
 
         try:
+            logger.info("YOLO model loading: path=%s", model_path)
             model = YOLO(model_path)
             model.to("cpu")
             _YOLO_MODEL_CACHE[model_path] = model
+            # Release loader buffers; model weights remain in cache but transient objects are freed.
+            gc.collect()
+            if _LIBC_MALLOC_TRIM is not None:
+                try:
+                    _LIBC_MALLOC_TRIM(0)
+                except Exception:
+                    pass
             if model_path not in _YOLO_LOADED_PATHS:
                 _YOLO_LOADED_PATHS.add(model_path)
                 logger.info("YOLO model loaded successfully path=%s device=cpu", model_path)
@@ -425,6 +452,12 @@ def _get_yolo_model() -> Any:
 
 def _release_yolo_inference_memory() -> None:
     gc.collect()
+    gc.collect()  # second pass catches objects freed by the first
+    if _LIBC_MALLOC_TRIM is not None:
+        try:
+            _LIBC_MALLOC_TRIM(0)
+        except Exception:
+            pass
 
 
 @contextmanager

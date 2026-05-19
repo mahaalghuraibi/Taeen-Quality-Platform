@@ -1,10 +1,14 @@
 /**
- * Production: static frontend on Render calls API on another host.
+ * Production: static frontend calls the backend on another host.
  *
  * Priority (production):
- * 1) VITE_API_BASE_URL (Render Static Site → Environment, build time)
- * 2) Known pairing fallback for taeen-quality-frontend.onrender.com
+ * 1) VITE_API_BASE_URL  ← set this in Railway/Render frontend service at build time
+ * 2) PRODUCTION_API_ORIGIN fallback (empty — must set VITE_API_BASE_URL)
  * 3) Dev only: localStorage `ska_api_base`
+ *
+ * Railway deployment: after the backend service is deployed, copy its URL and set
+ * VITE_API_BASE_URL=https://<backend>.railway.app  in the frontend service Variables tab,
+ * then redeploy the frontend.
  */
 function normalizeBase(raw) {
   return String(raw ?? "")
@@ -12,7 +16,9 @@ function normalizeBase(raw) {
     .replace(/\/+$/, "");
 }
 
-export const PRODUCTION_API_ORIGIN = "https://taeen-quality-platform.onrender.com";
+// No hardcoded fallback — backend URL is injected via VITE_API_BASE_URL at build time.
+// Leaving this empty forces a proper env var to be set rather than silently hitting a stale host.
+export const PRODUCTION_API_ORIGIN = "";
 
 function storageApiBase() {
   if (typeof window === "undefined") return "";
