@@ -844,6 +844,156 @@ function toStaffRecord(item, meta = {}) {
   };
 }
 
+function MonitoringResultPanel({ result, liveActive, liveTickBusy, manualLoading, zoneName, lastAnalyzedAt }) {
+  const SEV_CARD = { high: "border-red-500/35 bg-red-500/10", medium: "border-amber-500/35 bg-amber-500/10", low: "border-sky-500/25 bg-sky-500/10" };
+  const SEV_BADGE = { high: "border-red-500/40 bg-red-500/20 text-red-200", medium: "border-amber-500/40 bg-amber-500/20 text-amber-200", low: "border-sky-500/30 bg-sky-500/15 text-sky-200" };
+  const SEV_LABEL = { high: "عالي", medium: "متوسط", low: "منخفض" };
+  const CAT_LABEL = { PPE: "معدات الوقاية", hygiene: "النظافة", waste: "النفايات", cleanliness: "النظافة العامة", staff_behavior: "سلوك العمال", food_safety: "سلامة الغذاء" };
+
+  const isLoading = liveTickBusy || manualLoading;
+
+  // No result yet — show waiting panel
+  if (!result) {
+    return (
+      <div className="mt-4 rounded-xl border border-violet-500/20 bg-[#0d0d2b]/60 p-4">
+        <p className="mb-1 text-xs font-semibold text-slate-300">آخر نتيجة تحليل</p>
+        <div className="flex items-center gap-2 text-[11px] text-violet-300">
+          {isLoading ? (
+            <>
+              <span className="inline-block h-3 w-3 animate-spin rounded-full border border-violet-400/30 border-t-violet-300" />
+              <span>جاري إرسال الإطار للتحليل...</span>
+            </>
+          ) : liveActive ? (
+            <>
+              <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-violet-400" />
+              <span>في انتظار أول نتيجة — YOLO يُحمِّل النموذج (قد يستغرق 1–3 دقائق)</span>
+            </>
+          ) : (
+            <span className="text-slate-500">لا توجد نتيجة بعد — اضغط «تحليل» أو فعّل التحليل المباشر.</span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const res = result;
+  const qualityPct = typeof res.quality_pct === "number" ? res.quality_pct : 100;
+  const overallStatus = res.overall_status || "clean";
+  const realViolations = Array.isArray(res.violations) ? res.violations.filter((v) => !v.alias_of) : [];
+  const hasNoPerson = realViolations.some((v) => v.type === "no_person_in_zone");
+  const hasCameraWarning = realViolations.some((v) => v.type === "unclear_camera_angle");
+  const displayViolations = realViolations.filter((v) => v.type !== "no_person_in_zone" && v.type !== "unclear_camera_angle");
+  const ppeNotice = res.frame_report?.ppe_notice_ar;
+
+  const qualityColor = qualityPct >= 95 ? "text-emerald-400" : qualityPct >= 70 ? "text-amber-400" : "text-red-400";
+  const statusBg = overallStatus === "clean"
+    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+    : overallStatus === "warning"
+    ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+    : "border-red-500/30 bg-red-500/10 text-red-200";
+  const statusLabel = overallStatus === "clean" ? "مطابق للمعايير"
+    : overallStatus === "warning" ? "تحذير — مخالفات بسيطة"
+    : "خطر — مخالفات حرجة";
+
+  return (
+    <div className="mt-4 space-y-3">
+      {/* Header */}
+      <div className="flex items-start justify-between rounded-xl border border-white/10 bg-[#060d1f]/80 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-semibold text-slate-400">آخر نتيجة تحليل</p>
+            {isLoading && (
+              <span className="flex items-center gap-1 text-[10px] text-violet-300">
+                <span className="inline-block h-2 w-2 animate-spin rounded-full border border-violet-400/30 border-t-violet-300" />
+                جاري تحليل إطار جديد...
+              </span>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${statusBg}`}>
+              {statusLabel}
+            </span>
+            <span className="text-[10px] text-slate-500">
+              {res.violation_count ?? displayViolations.length} مخالفة
+            </span>
+          </div>
+          <p className="mt-1 text-[10px] text-slate-600">
+            {zoneName}
+            {typeof res.people_count === "number" && res.people_count > 0 ? ` · ${res.people_count} شخص` : ""}
+          </p>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className={`text-3xl font-bold leading-none ${qualityColor}`}>{qualityPct}%</p>
+          <p className="mt-1 text-[10px] text-slate-500">مؤشر الجودة</p>
+        </div>
+      </div>
+
+      {/* Camera / person warnings */}
+      {(hasNoPerson || hasCameraWarning || ppeNotice) && (
+        <div className="space-y-1 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-[11px] text-amber-300">
+          {hasNoPerson && <p>⚠ لم يُرصد أشخاص في منطقة المطبخ — يرجى توجيه الكاميرا نحو منطقة العمل.</p>}
+          {hasCameraWarning && <p>⚠ زاوية الكاميرا غير واضحة — أعد توجيهها نحو منطقة العمل.</p>}
+          {ppeNotice && !hasNoPerson && <p>⚠ {ppeNotice}</p>}
+        </div>
+      )}
+
+      {/* Violations */}
+      {displayViolations.length > 0 ? (
+        <div className="space-y-2">
+          {displayViolations.map((v, idx) => (
+            <article key={`vc-${idx}`} className={`rounded-xl border p-3 text-start ${SEV_CARD[v.severity] || SEV_CARD.medium}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-white">{v.label_ar}</p>
+                  <p className="mt-1 text-[11px] leading-snug text-slate-300">{v.reason_ar}</p>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1.5">
+                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${SEV_BADGE[v.severity] || SEV_BADGE.medium}`}>
+                    {SEV_LABEL[v.severity] || "متوسط"}
+                  </span>
+                  <span className="text-[10px] text-slate-400">ثقة: {v.confidence}%</span>
+                </div>
+              </div>
+              {v.suggested_action ? (
+                <p className="mt-2 text-[10px] text-slate-400">
+                  <span className="font-medium text-slate-300">الإجراء المقترح: </span>
+                  {v.suggested_action}
+                </p>
+              ) : null}
+              <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
+                {v.category ? <span>{CAT_LABEL[v.category] || v.category}</span> : null}
+                {v.person_index != null ? <span>العامل رقم: {v.person_index}</span> : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : !hasNoPerson && !hasCameraWarning ? (
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-center">
+          <p className="text-sm font-semibold text-emerald-300">🟢 لا توجد مخالفات</p>
+          <p className="mt-1 text-[10px] text-emerald-600">
+            {res.frame_report?.summary_ar || "لم يُرصد أي مخالفة — المطبخ مطابق لمعايير السلامة الغذائية."}
+          </p>
+        </div>
+      ) : null}
+
+      {/* Low confidence fallback */}
+      {res.overall_confidence != null && res.overall_confidence < 40 && displayViolations.length === 0 && !hasNoPerson && (
+        <p className="text-[10px] text-slate-500">
+          لم يتم رصد مخالفة مؤكدة، يرجى توجيه الكاميرا لمنطقة العمل بوضوح.
+        </p>
+      )}
+
+      {/* Footer */}
+      <div className="flex items-center justify-between text-[10px] text-slate-600">
+        <span>{res.provider === "yolo" ? "YOLO PPE" : res.provider === "gemini" ? "Gemini Vision" : (res.provider || "")}</span>
+        {(res.frame_report?.analyzed_at || lastAnalyzedAt) ? (
+          <span dir="ltr">{formatSaudiDateTime(res.frame_report?.analyzed_at || lastAnalyzedAt)}</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -2459,7 +2609,10 @@ export default function Dashboard() {
     if (!(role === "supervisor" || role === "admin")) return;
     if (!monitoringWebcamOn || !monitoringLiveAutoOn) return;
     const video = monitoringLiveVideoRef.current;
-    if (!video || video.readyState < 2) return;
+    if (!video || video.readyState < 2) {
+      console.log("[YOLO Live] video not ready, readyState=", video?.readyState ?? "no-ref");
+      return;
+    }
     if (liveAnalysisInFlightRef.current) return;
     const gen = liveGenRef.current;
     const token = getAccessToken();
@@ -2469,19 +2622,28 @@ export default function Dashboard() {
     setLiveTickBusy(true);
     try {
       const blob = await captureLiveMonitoringBlob(video);
+      console.log("[YOLO Live] blob captured:", blob ? `${blob.size}B` : "null (capture failed)");
       if (!blob || gen !== liveGenRef.current) return;
       const file = new File([blob], `live-${Date.now()}.jpg`, { type: "image/jpeg" });
       const { ok, status, body } = await callAnalyzeFrameEndpoint(file, token, { analysisMode: "live" });
+      console.log("[YOLO Live] response status=%d ok=%s body_status=%s violations=%d quality_pct=%s",
+        status, ok, body?.status, body?.violations?.length ?? "?", body?.quality_pct ?? "?");
       if (gen !== liveGenRef.current) return;
       if (handleProtectedAuthFailure(status, body?.detail)) return;
-      if (isMonitoringSkippedResponse(status, body)) return;
+      if (isMonitoringSkippedResponse(status, body)) {
+        console.log("[YOLO Live] skipped_busy — YOLO still running previous frame, will retry");
+        return;
+      }
       if (!isMonitoringAnalyzeSuccess(status, body)) {
         const errDetail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : null;
         const msg = errDetail || `فشل التحليل التلقائي (${status || "—"}).`;
+        console.log("[YOLO Live] analysis failed:", msg);
         setLiveAnalysisError(msg);
         return;
       }
       setLiveAnalysisError("");
+      console.log("[YOLO Live] ✓ result received — violations:", body?.violations?.length ?? 0,
+        "quality:", body?.quality_pct ?? "n/a", "status:", body?.overall_status ?? "n/a");
 
       setMonitoringAnalysisResult(body);
       setMonitoringLastAnalyzedAt(new Date().toISOString());
@@ -4285,150 +4447,20 @@ export default function Dashboard() {
                   ) : null}
                 </div>
 
-                {monitoringAnalysisResult &&
-                (cameraAnalyzeMode === "image" || monitoringWebcamOn) ? (() => {
-                  const res = monitoringAnalysisResult;
-                  const qualityPct = typeof res.quality_pct === "number" ? res.quality_pct : 100;
-                  const overallStatus = res.overall_status || "clean";
-                  const realViolations = Array.isArray(res.violations)
-                    ? res.violations.filter((v) => !v.alias_of)
-                    : [];
-                  const hasNoPerson = realViolations.some((v) => v.type === "no_person_in_zone");
-                  const hasCameraWarning = realViolations.some((v) => v.type === "unclear_camera_angle");
-                  const displayViolations = realViolations.filter(
-                    (v) => v.type !== "no_person_in_zone" && v.type !== "unclear_camera_angle"
-                  );
-                  const ppeNotice = res.frame_report?.ppe_notice_ar;
-
-                  const qualityColor =
-                    qualityPct >= 95 ? "text-emerald-400" : qualityPct >= 70 ? "text-amber-400" : "text-red-400";
-                  const statusBg =
-                    overallStatus === "clean"
-                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                      : overallStatus === "warning"
-                      ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
-                      : "border-red-500/30 bg-red-500/10 text-red-200";
-                  const statusLabel =
-                    overallStatus === "clean"
-                      ? "مطابق للمعايير"
-                      : overallStatus === "warning"
-                      ? "تحذير — مخالفات بسيطة"
-                      : "خطر — مخالفات حرجة";
-
-                  const sevCardClass = (sev) =>
-                    sev === "high"
-                      ? "border-red-500/35 bg-red-500/8"
-                      : sev === "medium"
-                      ? "border-amber-500/35 bg-amber-500/8"
-                      : "border-sky-500/25 bg-sky-500/8";
-                  const sevBadgeClass = (sev) =>
-                    sev === "high"
-                      ? "border-red-500/40 bg-red-500/20 text-red-200"
-                      : sev === "medium"
-                      ? "border-amber-500/40 bg-amber-500/20 text-amber-200"
-                      : "border-sky-500/30 bg-sky-500/15 text-sky-200";
-                  const sevLabel = (sev) =>
-                    sev === "high" ? "عالي" : sev === "medium" ? "متوسط" : "منخفض";
-                  const catLabel = (cat) => {
-                    const m = { PPE: "معدات الوقاية", hygiene: "النظافة", waste: "النفايات", cleanliness: "النظافة العامة", staff_behavior: "سلوك العمال", food_safety: "سلامة الغذاء" };
-                    return m[cat] || cat;
-                  };
-
-                  return (
-                    <div className="mt-4 space-y-3">
-                      {/* Status header */}
-                      <div className="flex items-center justify-between rounded-xl border border-white/10 bg-[#060d1f]/80 px-4 py-3">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${statusBg}`}>
-                              {statusLabel}
-                            </span>
-                            <span className="text-[10px] text-slate-500">
-                              {res.violation_count ?? displayViolations.length} مخالفة
-                            </span>
-                          </div>
-                          <p className="mt-1.5 text-[10px] text-slate-500">
-                            المنطقة: {selectedZoneMeta.zoneAr}
-                            {typeof res.people_count === "number" && res.people_count > 0
-                              ? ` · الأشخاص المرصودون: ${res.people_count}`
-                              : ""}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className={`text-3xl font-bold leading-none ${qualityColor}`}>{qualityPct}%</p>
-                          <p className="mt-1 text-[10px] text-slate-500">مؤشر الجودة</p>
-                        </div>
-                      </div>
-
-                      {/* Camera / person warnings */}
-                      {(hasNoPerson || hasCameraWarning || ppeNotice) ? (
-                        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-[11px] text-amber-300 space-y-1">
-                          {hasNoPerson && <p>⚠ لم يُرصد أشخاص في المنطقة — يرجى توجيه الكاميرا نحو منطقة عمل المطبخ.</p>}
-                          {hasCameraWarning && <p>⚠ زاوية الكاميرا غير واضحة — أعد توجيهها نحو منطقة العمل.</p>}
-                          {ppeNotice && !hasNoPerson && <p>⚠ {ppeNotice}</p>}
-                        </div>
-                      ) : null}
-
-                      {/* Violations or clean */}
-                      {displayViolations.length > 0 ? (
-                        <div className="space-y-2">
-                          {displayViolations.map((v, idx) => (
-                            <article
-                              key={`vc-${idx}`}
-                              className={`rounded-xl border p-3 text-start ${sevCardClass(v.severity || "medium")}`}
-                            >
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="min-w-0 flex-1">
-                                  <p className="text-sm font-semibold text-white">{v.label_ar}</p>
-                                  <p className="mt-1 text-[11px] leading-snug text-slate-300">{v.reason_ar}</p>
-                                </div>
-                                <div className="flex shrink-0 flex-col items-end gap-1.5">
-                                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${sevBadgeClass(v.severity || "medium")}`}>
-                                    {sevLabel(v.severity || "medium")}
-                                  </span>
-                                  <span className="text-[10px] text-slate-400">ثقة: {v.confidence}%</span>
-                                </div>
-                              </div>
-                              {v.suggested_action ? (
-                                <p className="mt-2 text-[10px] text-slate-400">
-                                  <span className="font-medium text-slate-300">الإجراء المقترح: </span>
-                                  {v.suggested_action}
-                                </p>
-                              ) : null}
-                              <div className="mt-1.5 flex items-center gap-3 text-[10px] text-slate-500">
-                                {v.category ? <span>{catLabel(v.category)}</span> : null}
-                                {v.person_index != null ? <span>العامل رقم: {v.person_index}</span> : null}
-                              </div>
-                            </article>
-                          ))}
-                        </div>
-                      ) : !hasNoPerson && !hasCameraWarning ? (
-                        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-center">
-                          <p className="text-sm font-semibold text-emerald-300">🟢 لا توجد مخالفات</p>
-                          <p className="mt-1 text-[10px] text-emerald-600">
-                            {res.frame_report?.summary_ar ||
-                              "لم يُرصد أي مخالفة — المطبخ مطابق لمعايير السلامة الغذائية."}
-                          </p>
-                        </div>
-                      ) : null}
-
-                      {/* Low-confidence fallback notice */}
-                      {res.overall_confidence != null && res.overall_confidence < 40 && displayViolations.length === 0 && !hasNoPerson ? (
-                        <p className="text-[10px] text-slate-500">
-                          لم يتم رصد مخالفة مؤكدة، يرجى توجيه الكاميرا لمنطقة العمل بوضوح.
-                        </p>
-                      ) : null}
-
-                      {/* Footer: timestamp */}
-                      <div className="flex items-center justify-between text-[10px] text-slate-600">
-                        <span>{res.provider === "yolo" ? "YOLO PPE" : res.provider === "gemini" ? "Gemini Vision" : res.provider}</span>
-                        {(res.frame_report?.analyzed_at || monitoringLastAnalyzedAt) ? (
-                          <span dir="ltr">{formatSaudiDateTime(res.frame_report?.analyzed_at || monitoringLastAnalyzedAt)}</span>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })() : null}
+                {/* آخر نتيجة تحليل — always visible once live is active or a result exists */}
+                {(monitoringAnalysisResult != null ||
+                  (monitoringLiveAutoOn && monitoringWebcamOn) ||
+                  monitoringWebcamBusy ||
+                  (monitoringAnalyzeLoading && cameraAnalyzeMode === "image")) ? (
+                  <MonitoringResultPanel
+                    result={monitoringAnalysisResult}
+                    liveActive={monitoringLiveAutoOn && monitoringWebcamOn}
+                    liveTickBusy={liveTickBusy}
+                    manualLoading={monitoringAnalyzeLoading || monitoringWebcamBusy}
+                    zoneName={selectedZoneMeta.zoneAr}
+                    lastAnalyzedAt={monitoringLastAnalyzedAt}
+                  />
+                ) : null}
 
                 {cameraAnalyzeMode === "video" ? (
                   <div>
