@@ -1801,6 +1801,17 @@ def _analyze_frame_yolo_core(
     if exact_people == 0 and (raw_person_hits > 0 or len(ppe_flat) > 0):
         exact_people = 1
 
+    # Rule-based: no person visible at all — flag as low-severity observation.
+    if exact_people == 0 and raw_person_hits == 0 and len(ppe_flat) == 0:
+        violations_flat.append({
+            "type": "no_person_in_zone",
+            "label_ar": "لم يُرصد أشخاص في منطقة المطبخ",
+            "confidence": 80,
+            "reason_ar": "لم يُكتشف أي شخص في الإطار. يرجى توجيه الكاميرا نحو منطقة عمل المطبخ.",
+            "description": "لم يُكتشف أي شخص في الإطار.",
+            "status": "new",
+        })
+
     payload["people_count"] = exact_people
 
     violators_by_check_key = {

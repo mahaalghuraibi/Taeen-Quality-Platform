@@ -216,6 +216,9 @@ async def analyze_frame(
                 status=str(v.get("status", "new") or "new"),
                 person_index=v.get("person_index"),
                 alias_of=v.get("alias_of"),
+                severity=str(v.get("severity", "medium") or "medium"),
+                category=str(v.get("category", "PPE") or "PPE"),
+                suggested_action=str(v.get("suggested_action", "") or ""),
             )
             for v in (payload.get("violations") or [])
             if isinstance(v, dict)
@@ -223,4 +226,7 @@ async def analyze_frame(
         alerts_created=alerts_created,
         summary=str(payload.get("summary", "")),
         frame_report=payload.get("frame_report"),
+        quality_pct=int(payload.get("quality_pct", 100) or 100),
+        violation_count=int(payload.get("violation_count", 0) or 0),
+        overall_status=str(payload.get("overall_status", "clean") or "clean"),
     )

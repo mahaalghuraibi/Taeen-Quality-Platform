@@ -40,11 +40,59 @@ VIOLATION_TYPE_LABELS: dict[str, str] = {
     "improper_uniform": "عدم ارتداء الزي الرسمي",
     "trash_on_floor": "نفايات على الأرض",
     "improper_waste_area": "موقع النفايات غير ملائم",
-    # Legacy DB / payloads (normalize at UI when aggregating)
+    "no_person_in_zone": "لم يُرصد أشخاص في المنطقة",
+    "unclear_camera_angle": "زاوية الكاميرا غير واضحة",
+    # Legacy DB / payloads
     "no_glove": "عدم ارتداء القفازات",
     "no_helmet": "عدم ارتداء غطاء الرأس / قبعة الشيف",
     "no_head_cover": "عدم ارتداء غطاء الرأس / قبعة الشيف",
 }
+
+VIOLATION_METADATA: dict[str, dict[str, str]] = {
+    "no_mask": {
+        "severity": "high",
+        "category": "PPE",
+        "suggested_action": "توجيه العامل بارتداء الكمامة فوراً قبل التعامل مع الطعام",
+    },
+    "no_gloves": {
+        "severity": "high",
+        "category": "PPE",
+        "suggested_action": "توجيه العامل بارتداء القفازات قبل التعامل مع الطعام مباشرةً",
+    },
+    "no_headcover": {
+        "severity": "high",
+        "category": "PPE",
+        "suggested_action": "توجيه العامل بارتداء غطاء الرأس أو قبعة الشيف الصحية",
+    },
+    "improper_uniform": {
+        "severity": "medium",
+        "category": "PPE",
+        "suggested_action": "مراجعة زي العامل والتأكد من الالتزام الكامل بمعايير الزي المعتمد",
+    },
+    "trash_on_floor": {
+        "severity": "high",
+        "category": "hygiene",
+        "suggested_action": "تنظيف المنطقة فوراً وإزالة النفايات من أرضية المطبخ",
+    },
+    "improper_waste_area": {
+        "severity": "medium",
+        "category": "waste",
+        "suggested_action": "ترتيب منطقة النفايات والتأكد من إغلاق حاويات القمامة بشكل صحيح",
+    },
+    "no_person_in_zone": {
+        "severity": "low",
+        "category": "staff_behavior",
+        "suggested_action": "التحقق من وجود عمال في منطقة المطبخ أو إعادة توجيه الكاميرا لمنطقة العمل",
+    },
+    "unclear_camera_angle": {
+        "severity": "low",
+        "category": "cleanliness",
+        "suggested_action": "إعادة توجيه الكاميرا نحو منطقة العمل بشكل واضح لضمان دقة التحليل",
+    },
+}
+
+_SEVERITY_ORDER: dict[str, int] = {"high": 0, "medium": 1, "low": 2}
+_SEVERITY_DEDUCTION: dict[str, int] = {"high": 20, "medium": 10, "low": 5}
 
 # Prompt in English for reliable JSON output; Arabic used only in label/reason fields.
 GEMINI_PROMPT_MONITORING = """You are a kitchen food-safety compliance inspector for restaurant kitchens (YOLO may also run separately).
@@ -361,6 +409,28 @@ def _finalize_payload(
                     if not needs_review_any:
                         needs_review_any = True
 
+    # Enrich violations with severity / category / suggested_action metadata.
+    for v in violations_out:
+        meta = VIOLATION_METADATA.get(v.get("type", ""), {})
+        v.setdefault("severity", meta.get("severity", "medium"))
+        v.setdefault("category", meta.get("category", "PPE"))
+        v.setdefault("suggested_action", meta.get("suggested_action", ""))
+
+    # Sort: high → medium → low; alias entries float to end.
+    violations_out.sort(
+        key=lambda v: (_SEVERITY_ORDER.get(v.get("severity", "medium"), 1), 1 if v.get("alias_of") else 0)
+    )
+
+    # Quality percentage and overall status.
+    real_violations = [v for v in violations_out if not v.get("alias_of")]
+    quality_pct = max(0, 100 - sum(_SEVERITY_DEDUCTION.get(v.get("severity", "medium"), 10) for v in real_violations))
+    if quality_pct >= 95:
+        overall_status = "clean"
+    elif quality_pct >= 70:
+        overall_status = "warning"
+    else:
+        overall_status = "critical"
+
     overall = int(round(sum(confidences) / max(1, len(confidences)))) if confidences else 0
 
     # Build a plain-language Arabic summary
@@ -396,6 +466,9 @@ def _finalize_payload(
         "checks": checks_out,
         "violations": violations_out,
         "summary": summary,
+        "quality_pct": quality_pct,
+        "violation_count": len(real_violations),
+        "overall_status": overall_status,
     }
     if frame_report:
         out["frame_report"] = frame_report

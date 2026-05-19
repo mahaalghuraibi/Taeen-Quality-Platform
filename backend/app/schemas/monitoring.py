@@ -17,10 +17,13 @@ class MonitoringViolationOut(BaseModel):
     label_ar: str
     confidence: int = Field(ge=0, le=100)
     reason_ar: str
-    description: str = ""   # human-readable Arabic description (same as reason_ar)
-    status: str = "new"     # lifecycle status: new | open | resolved
+    description: str = ""
+    status: str = "new"
     person_index: int | None = None
     alias_of: str | None = None
+    severity: str = "medium"        # low | medium | high
+    category: str = "PPE"           # PPE | hygiene | waste | cleanliness | staff_behavior | food_safety
+    suggested_action: str = ""
 
 
 class MonitoringAnalyzeResponse(BaseModel):
@@ -37,3 +40,6 @@ class MonitoringAnalyzeResponse(BaseModel):
     alerts_created: int = Field(default=0, ge=0)
     summary: str = ""
     frame_report: dict[str, Any] | None = None
+    quality_pct: int = Field(ge=0, le=100, default=100)
+    violation_count: int = Field(ge=0, default=0)
+    overall_status: str = "clean"   # clean | warning | critical
