@@ -1,0 +1,27 @@
+# Raw and split image data (keep folder structure via .gitkeep)
+**/raw/**/*.jpg
+**/raw/**/*.jpeg
+**/raw/**/*.png
+**/raw/**/*.webp
+**/raw/**/*.bmp
+**/labeled/**/*.jpg
+**/labeled/**/*.jpeg
+**/labeled/**/*.png
+**/train/**/*.jpg
+**/train/**/*.jpeg
+**/train/**/*.png
+**/valid/**/*.jpg
+**/valid/**/*.jpeg
+**/valid/**/*.png
+**/yolo_export/images/**/*
+!**/yolo_export/images/**/.gitkeep
+
+# Roboflow / download caches
+downloads/
+*.zip
+*.cache
+
+# Training artifacts (store outside dataset or in backend/ml/models/)
+runs/
+*.pt
+!**/.gitkeep

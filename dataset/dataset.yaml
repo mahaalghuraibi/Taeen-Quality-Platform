@@ -1,0 +1,33 @@
+# Ultralytics YOLOv8 dataset — kitchen safety violations
+# Usage: yolo detect train data=dataset/dataset.yaml model=yolov8n.pt
+#
+# Run scripts/organize_dataset.py first to populate yolo_export/ from per-class folders.
+
+path: .  # relative to this file (dataset/)
+train: yolo_export/images/train
+val: yolo_export/images/val
+
+# Optional test split (create yolo_export/images/test if needed)
+# test: yolo_export/images/test
+
+nc: 11
+names:
+  0: helmet
+  1: mask
+  2: gloves
+  3: hairnet
+  4: trash
+  5: dirty_surface
+  6: improper_uniform
+  7: no_mask
+  8: no_gloves
+  9: no_hairnet
+  10: wet_floor
+
+# Roboflow metadata (fill when exporting from a Roboflow project)
+roboflow:
+  workspace: null
+  project: null
+  version: null
+  license: Private
+  url: null
