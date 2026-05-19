@@ -1,0 +1,22 @@
+# Exclude files that don't belong in the Docker image
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+.eggs
+dist
+build
+.git
+.gitignore
+.env
+.env.*
+*.md
+test.db
+media
+ml/models
+.pytest_cache
+.coverage
+htmlcov
+nixpacks.toml
