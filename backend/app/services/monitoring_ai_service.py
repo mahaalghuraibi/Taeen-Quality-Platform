@@ -746,7 +746,13 @@ def analyze_monitoring_frame(
         return _analyze_demo(camera_name, location)
 
     if not settings.YOLO_ENABLED:
-        raise ValueError("YOLO is disabled (YOLO_ENABLED=false).")
+        gemini_key = (settings.MONITORING_GEMINI_API_KEY or settings.GEMINI_API_KEY or "").strip()
+        if gemini_key:
+            return _run_gemini_monitoring(image_bytes, camera_name, location)
+        raise ValueError(
+            "لم يتم تفعيل أي محرك تحليل. "
+            "فعّل YOLO_ENABLED=true أو أضف MONITORING_GEMINI_API_KEY في إعدادات الخادم."
+        )
 
     from app.services.yolo_monitoring_service import analyze_frame_yolo  # noqa: PLC0415
 

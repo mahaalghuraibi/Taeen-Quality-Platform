@@ -68,7 +68,6 @@ except Exception:
     logger.debug("libc.malloc_trim not available on this platform — relying on gc.collect() only.")
 
 YOLO_BUSY_MESSAGE = "التحليل السابق ما زال قيد المعالجة"
-_YOLO_BUSY_MESSAGE = YOLO_BUSY_MESSAGE
 _YOLO_INFERENCE_LOCK = threading.Lock()
 _YOLO_LOCK_WAIT_SEC = max(30, int(os.getenv("YOLO_LOCK_WAIT_SEC", "180")))
 _YOLO_LOAD_LOCK = threading.Lock()
@@ -476,7 +475,7 @@ def _yolo_analysis_slot(*, wait: bool = True) -> Iterator[None]:
             )
             raise ValueError("انتهت مهلة انتظار التحليل. حاول مرة أخرى بعد قليل.")
     elif not _YOLO_INFERENCE_LOCK.acquire(blocking=False):
-        raise ValueError(_YOLO_BUSY_MESSAGE)
+        raise ValueError(YOLO_BUSY_MESSAGE)
     try:
         yield
     finally:
@@ -680,18 +679,6 @@ def _merge_boxes_xyxy(boxes: list[list[float]]) -> list[float]:
     x2 = max(b[2] for b in boxes)
     y2 = max(b[3] for b in boxes)
     return [x1, y1, x2, y2]
-
-
-def _nms_person_boxes(boxes: list[list[float]], iou_thresh: float = 0.55) -> list[list[float]]:
-    if not boxes:
-        return []
-    sorted_boxes = sorted(boxes, key=lambda b: _bbox_area(b), reverse=True)
-    kept: list[list[float]] = []
-    for b in sorted_boxes:
-        if any(_iou(b, k) > iou_thresh for k in kept):
-            continue
-        kept.append(b)
-    return kept
 
 
 def _nms_person_entries(entries: list[tuple[list[float], int]], iou_thresh: float = 0.55) -> list[tuple[list[float], int]]:
@@ -1423,23 +1410,67 @@ def _aggregate_scene_hygiene(
             "status": "new",
         })
 
-    sensors = bool(scene_flat)
-
-    if best_floor >= 0:
-        tf_row: dict[str, Any] = {"key": "trash_floor", "status": "violation", "confidence": best_floor, "reason_ar": rtf["violation"]}
-    elif sensors:
-        tf_row = {"key": "trash_floor", "status": "uncertain", "confidence": 0, "reason_ar": rtf["uncertain"]}
-    else:
-        tf_row = {"key": "trash_floor", "status": "uncertain", "confidence": 0, "reason_ar": rtf["uncertain"]}
-
-    if best_area >= 0:
-        wa_row: dict[str, Any] = {"key": "waste_area", "status": "violation", "confidence": best_area, "reason_ar": rwa["violation"]}
-    elif sensors:
-        wa_row = {"key": "waste_area", "status": "uncertain", "confidence": 0, "reason_ar": rwa["uncertain"]}
-    else:
-        wa_row = {"key": "waste_area", "status": "uncertain", "confidence": 0, "reason_ar": rwa["uncertain"]}
+    tf_row: dict[str, Any] = (
+        {"key": "trash_floor", "status": "violation", "confidence": best_floor, "reason_ar": rtf["violation"]}
+        if best_floor >= 0
+        else {"key": "trash_floor", "status": "uncertain", "confidence": 0, "reason_ar": rtf["uncertain"]}
+    )
+    wa_row: dict[str, Any] = (
+        {"key": "waste_area", "status": "violation", "confidence": best_area, "reason_ar": rwa["violation"]}
+        if best_area >= 0
+        else {"key": "waste_area", "status": "uncertain", "confidence": 0, "reason_ar": rwa["uncertain"]}
+    )
 
     return violations, tf_row, wa_row
+
+
+def _assess_image_quality(image_bytes: bytes) -> dict[str, Any] | None:
+    """
+    Quick pre-flight quality check using a 64×64 thumbnail.
+    Returns an unclear_camera_angle violation dict when the frame is near-black,
+    overexposed, or too small to analyse. Returns None when the image is usable.
+    """
+    try:
+        from PIL import Image as PILImage, ImageStat
+        img = PILImage.open(io.BytesIO(image_bytes)).convert("RGB")
+        w, h = img.size
+        if w < 32 or h < 32:
+            logger.info("quality gate: image too small %dx%d", w, h)
+            return {
+                "type": "unclear_camera_angle",
+                "label_ar": "زاوية الكاميرا غير واضحة",
+                "confidence": 90,
+                "reason_ar": "دقة الصورة منخفضة جداً — الإطار أصغر من الحد الأدنى للتحليل.",
+                "description": "دقة الصورة غير كافية.",
+                "status": "new",
+            }
+        thumb = img.resize((64, 64), PILImage.Resampling.NEAREST)
+        stat = ImageStat.Stat(thumb)
+        r, g, b = stat.mean[:3]
+        lum = 0.299 * r + 0.587 * g + 0.114 * b
+        if lum < 12.0:
+            logger.info("quality gate: near-black frame lum=%.1f", lum)
+            return {
+                "type": "unclear_camera_angle",
+                "label_ar": "زاوية الكاميرا غير واضحة",
+                "confidence": 88,
+                "reason_ar": "الإطار شبه معتم — قد تكون الكاميرا مغطاة أو الإضاءة شبه معدومة.",
+                "description": "إضاءة الإطار شبه معدومة.",
+                "status": "new",
+            }
+        if lum > 248.0:
+            logger.info("quality gate: overexposed frame lum=%.1f", lum)
+            return {
+                "type": "unclear_camera_angle",
+                "label_ar": "زاوية الكاميرا غير واضحة",
+                "confidence": 85,
+                "reason_ar": "الإطار مضيء بشكل مفرط — قد تكون الكاميرا مكشوفة للضوء المباشر.",
+                "description": "الإطار مضيء بشكل مفرط.",
+                "status": "new",
+            }
+    except Exception:
+        pass
+    return None
 
 
 def _run_yolo_inference(
@@ -1633,6 +1664,12 @@ def _analyze_frame_yolo_core(
         _YOLO_MAX_EDGE,
     )
 
+    # Initialise violations list early so quality and rule-based violations enter _finalize_payload.
+    violations_flat: list[dict[str, Any]] = []
+    _quality_issue = _assess_image_quality(image_bytes)
+    if _quality_issue:
+        violations_flat.append(_quality_issue)
+
     ppe_flat, scene_flat, person_boxes, iw, ih, raw_person_hits, pil_rgb, person_confs, yolo_diag = (
         _run_yolo_inference(image_bytes)
     )
@@ -1667,7 +1704,6 @@ def _analyze_frame_yolo_core(
 
     # Second pass: build violations + head-cover adjusted states (FP filtering does not apply to other checks).
     cam_key = _camera_key_for_streak(camera_name)
-    violations_flat: list[dict[str, Any]] = []
     adjusted_person_states: list[dict[str, tuple[str, int]]] = []
     rejected_debug: list[dict[str, Any]] = []
 
@@ -1771,6 +1807,33 @@ def _analyze_frame_yolo_core(
         checks_in = [tf_row, wa_row]
     violations_flat.extend(scene_violations)
 
+    # Compute exact_people from violations_flat BEFORE _finalize_payload so that rule-based
+    # violations (no_person_in_zone) are included in the payload, not appended after.
+    pin_vals: list[int] = []
+    for v in violations_flat:
+        pi = v.get("person_index")
+        if pi is None:
+            continue
+        try:
+            pin_vals.append(int(pi))
+        except (TypeError, ValueError):
+            continue
+    pin_max = max(pin_vals) if pin_vals else 0
+    exact_people = max(len(person_boxes), len(groups), pin_max)
+    if exact_people == 0 and (raw_person_hits > 0 or len(ppe_flat) > 0):
+        exact_people = 1
+
+    # Rule-based: no person visible — only when no camera quality issue was already raised.
+    if exact_people == 0 and raw_person_hits == 0 and len(ppe_flat) == 0 and not _quality_issue:
+        violations_flat.append({
+            "type": "no_person_in_zone",
+            "label_ar": "لم يُرصد أشخاص في منطقة المطبخ",
+            "confidence": 80,
+            "reason_ar": "لم يُكتشف أي شخص في الإطار. يرجى توجيه الكاميرا نحو منطقة عمل المطبخ.",
+            "description": "لم يُكتشف أي شخص في الإطار.",
+            "status": "new",
+        })
+
     analyzed_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     payload = _finalize_payload(
@@ -1786,54 +1849,7 @@ def _analyze_frame_yolo_core(
     )
 
     violations_ok = payload.get("violations") or []
-
-    pin_vals: list[int] = []
-    for v in violations_ok:
-        pi = v.get("person_index")
-        if pi is None:
-            continue
-        try:
-            pin_vals.append(int(pi))
-        except (TypeError, ValueError):
-            continue
-    pin_max = max(pin_vals) if pin_vals else 0
-    exact_people = max(len(person_boxes), len(groups), pin_max)
-    if exact_people == 0 and (raw_person_hits > 0 or len(ppe_flat) > 0):
-        exact_people = 1
-
-    # Rule-based: no person visible at all — flag as low-severity observation.
-    if exact_people == 0 and raw_person_hits == 0 and len(ppe_flat) == 0:
-        violations_flat.append({
-            "type": "no_person_in_zone",
-            "label_ar": "لم يُرصد أشخاص في منطقة المطبخ",
-            "confidence": 80,
-            "reason_ar": "لم يُكتشف أي شخص في الإطار. يرجى توجيه الكاميرا نحو منطقة عمل المطبخ.",
-            "description": "لم يُكتشف أي شخص في الإطار.",
-            "status": "new",
-        })
-
     payload["people_count"] = exact_people
-
-    violators_by_check_key = {
-        "mask": 0,
-        "glove": 0,
-        "helmet": 0,
-        "uniform": 0,
-        "trash_floor": 0,
-        "waste_area": 0,
-    }
-    _VT_TO_CHECK_KEY = {
-        "no_mask": "mask",
-        "no_gloves": "glove",
-        "no_headcover": "helmet",
-        "improper_uniform": "uniform",
-        "trash_on_floor": "trash_floor",
-        "improper_waste_area": "waste_area",
-    }
-    for v in violations_ok:
-        ck = _VT_TO_CHECK_KEY.get(str(v.get("type", "")).strip())
-        if ck:
-            violators_by_check_key[ck] += 1
 
     for row in payload.get("checks") or []:
         if isinstance(row, dict) and row.get("key") == "people_count":
@@ -1882,7 +1898,6 @@ def _analyze_frame_yolo_core(
         "violation_lines": lines,
         "people_clusters": len(groups),
         "people_count_exact": exact_people,
-        "violators_by_check_key": violators_by_check_key,
         "ppe_rejected_violations": rejected_debug,
         "ppe_rejected_counts_by_reason": rej_counts,
         "yolo_diag": yolo_diag_out,

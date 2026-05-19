@@ -25,6 +25,9 @@ router = APIRouter(
 
 logger = logging.getLogger(__name__)
 
+# Observational violation types that inform the UI but should not create DB alert rows.
+_NO_ALERT_TYPES: frozenset[str] = frozenset({"no_person_in_zone", "unclear_camera_angle"})
+
 
 def _skipped_busy_response() -> MonitoringAnalyzeResponse:
     """Live mode: previous frame still running — drop this frame without error UI."""
@@ -91,14 +94,24 @@ async def analyze_frame(
     live_mode = mode == "live"
     try:
         # YOLO inference + model download are CPU/IO heavy — never block the asyncio event loop.
-        payload = await asyncio.to_thread(
-            analyze_monitoring_frame,
-            image_bytes=image_bytes,
-            content_type=image.content_type,
-            camera_name=(camera_name or "").strip() or None,
-            location=(location or "").strip() or None,
-            wait_for_slot=not live_mode,
+        # 300-second outer timeout covers cold-start model download (~3 min) plus inference.
+        payload = await asyncio.wait_for(
+            asyncio.to_thread(
+                analyze_monitoring_frame,
+                image_bytes=image_bytes,
+                content_type=image.content_type,
+                camera_name=(camera_name or "").strip() or None,
+                location=(location or "").strip() or None,
+                wait_for_slot=not live_mode,
+            ),
+            timeout=300,
         )
+    except asyncio.TimeoutError:
+        logger.error("monitoring analyze timeout: exceeded 300s camera=%s", camera_name)
+        raise HTTPException(
+            status_code=503,
+            detail="انتهت مهلة التحليل. حاول مرة أخرى — قد يكون النموذج ما زال يُحمَّل.",
+        ) from None
     except ValueError as exc:
         msg = str(exc)
         if msg == YOLO_BUSY_MESSAGE and live_mode:
@@ -158,6 +171,9 @@ async def analyze_frame(
         except (TypeError, ValueError):
             pin_int = None
         dedupe_key = (vtype, pin_int)
+        # Observational types inform the UI only — do not create alert rows.
+        if vtype in _NO_ALERT_TYPES:
+            continue
         # Finalize_payload already applies per-type thresholds; this is only a hard junk floor (noise < ~37%).
         if not vtype or vconf < 32:
             continue
