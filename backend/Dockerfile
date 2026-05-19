@@ -10,10 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN python3 -m pip install --no-cache-dir -r requirements.txt
+COPY backend/requirements.txt ./requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY backend/ .
 
 RUN mkdir -p ml/models && chmod +x scripts/start.sh
 
