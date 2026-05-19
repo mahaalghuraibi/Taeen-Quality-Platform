@@ -1,14 +1,10 @@
 /**
- * Production: static frontend calls the backend on another host.
+ * Production: static frontend on Render calls API on another host.
  *
- * Priority (production):
- * 1) VITE_API_BASE_URL  ← set this in Railway/Render frontend service at build time
- * 2) PRODUCTION_API_ORIGIN fallback (empty — must set VITE_API_BASE_URL)
+ * Priority:
+ * 1) VITE_API_BASE_URL (set at build time on Render / Railway)
+ * 2) Known Render pairing fallback (taeen-quality-frontend → taeen-quality-platform)
  * 3) Dev only: localStorage `ska_api_base`
- *
- * Railway deployment: after the backend service is deployed, copy its URL and set
- * VITE_API_BASE_URL=https://<backend>.railway.app  in the frontend service Variables tab,
- * then redeploy the frontend.
  */
 function normalizeBase(raw) {
   return String(raw ?? "")
@@ -16,9 +12,8 @@ function normalizeBase(raw) {
     .replace(/\/+$/, "");
 }
 
-// No hardcoded fallback — backend URL is injected via VITE_API_BASE_URL at build time.
-// Leaving this empty forces a proper env var to be set rather than silently hitting a stale host.
-export const PRODUCTION_API_ORIGIN = "";
+/** Render production backend (used when VITE_API_BASE_URL is missing from the build). */
+export const PRODUCTION_API_ORIGIN = "https://taeen-quality-platform.onrender.com";
 
 function storageApiBase() {
   if (typeof window === "undefined") return "";
@@ -32,7 +27,7 @@ function storageApiBase() {
   return "";
 }
 
-/** When VITE_API_BASE_URL was not baked into the build. */
+/** Last-resort when VITE_API_BASE_URL was not baked into the build. */
 function inferProductionApiBase() {
   if (typeof window === "undefined") return "";
   if (!import.meta.env.PROD) return "";
@@ -41,7 +36,6 @@ function inferProductionApiBase() {
   return PRODUCTION_API_ORIGIN;
 }
 
-/** Clear stale overrides that pointed login at a dead host. */
 export function clearStaleApiBaseOverride() {
   if (typeof window === "undefined" || !import.meta.env.PROD) return;
   try {

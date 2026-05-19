@@ -128,11 +128,32 @@ export default function LoginPage() {
         AUTH_FETCH_TIMEOUT_MS,
       );
 
-      const data = await res.json().catch(() => ({}));
+      const contentType = String(res.headers.get("content-type") || "").toLowerCase();
+      const rawText = await res.text();
+      let data = {};
+      if (contentType.includes("application/json") || rawText.trim().startsWith("{")) {
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          data = {};
+        }
+      }
 
       if (!res.ok) {
         logAuthFailure("Login", loginUrl, res, data, { loginId });
         setError(formatAuthError(res.status, data, "تعذر تسجيل الدخول."));
+        return;
+      }
+
+      if (!data?.access_token && !contentType.includes("application/json")) {
+        console.error("[Login] non-JSON 200 — API base misconfigured?", {
+          loginUrl,
+          contentType,
+          preview: rawText.slice(0, 120),
+        });
+        setError(
+          "تعذر الاتصال بخادم API. تأكد من نشر الواجهة مع VITE_API_BASE_URL=https://taeen-quality-platform.onrender.com",
+        );
         return;
       }
 

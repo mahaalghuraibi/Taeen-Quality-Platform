@@ -56,6 +56,9 @@ export function formatAuthError(status, body, fallback = "تعذر إكمال ا
     return "البيانات المرسلة غير صالحة. راجع الحقول وحاول مرة أخرى.";
   }
   if (status === 400) return fallback;
+  if (status === 200) {
+    return "استجابة غير متوقعة من الخادم (لا يوجد رمز دخول). تحقق من إعداد VITE_API_BASE_URL في نشر الواجهة.";
+  }
   return `${fallback} (رمز ${status})`;
 }
 
