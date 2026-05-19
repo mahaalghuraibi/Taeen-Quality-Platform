@@ -1,0 +1,17 @@
+# Nixpacks config — used by Railway when the builder falls back to Nixpacks.
+# Ensures Python + pip are available and the correct start script is used.
+[phases.setup]
+nixPkgs = [
+  "python311",
+  "python311Packages.pip",
+  "libGL",
+  "glib",
+]
+
+[phases.install]
+cmds = [
+  "python3 -m pip install --no-cache-dir -r requirements.txt",
+]
+
+[start]
+cmd = "bash scripts/start.sh"
