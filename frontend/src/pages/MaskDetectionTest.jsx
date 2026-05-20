@@ -84,6 +84,12 @@ export default function MaskDetectionTest() {
       setLoading(false);
 
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          // Token expired or invalid — clear it and redirect to login
+          localStorage.removeItem(ACCESS_TOKEN_KEY);
+          navigate("/login", { replace: true });
+          return;
+        }
         setError(res.error ?? "حدث خطأ غير متوقع");
         return;
       }

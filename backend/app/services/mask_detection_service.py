@@ -55,6 +55,31 @@ def _load_model() -> Any:
     return _cached_model
 
 
+def _decode_image(image_bytes: bytes):  # type: ignore[return]
+    """
+    Decode raw bytes into a numpy (H, W, 3) RGB array.
+
+    Ultralytics monkey-patches PIL.Image.open after YOLO is loaded, which
+    breaks BytesIO inputs in some versions.  Using cv2/numpy avoids that
+    patch entirely and is more resilient across image formats.
+    """
+    import numpy as np
+    import cv2  # opencv-python-headless
+
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img_bgr is None:
+        # cv2 failed (e.g. HEIC, rare formats) — fall back to PIL with a
+        # fresh BytesIO so the ultralytics patch cannot intercept it.
+        import importlib
+        pil_module = importlib.import_module("PIL.Image")
+        _open = getattr(pil_module, "_original_open", pil_module.open)
+        img_pil = _open(io.BytesIO(image_bytes)).convert("RGB")
+        return np.array(img_pil)
+    # cv2 returns BGR; YOLO expects RGB
+    return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+
+
 def run_mask_detection(image_bytes: bytes) -> dict[str, Any]:
     """
     Run YOLO inference on *image_bytes* and return structured detection results.
@@ -77,11 +102,9 @@ def run_mask_detection(image_bytes: bytes) -> dict[str, Any]:
             ],
         }
     """
-    from PIL import Image as PILImage
-
     model = _load_model()
-    img = PILImage.open(io.BytesIO(image_bytes)).convert("RGB")
-    results = model(img, verbose=False)
+    img_array = _decode_image(image_bytes)
+    results = model(img_array, verbose=False)
 
     boxes_out: list[dict[str, Any]] = []
     violations: set[str] = set()

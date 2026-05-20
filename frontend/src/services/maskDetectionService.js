@@ -21,10 +21,10 @@ export async function analyzeMask(token, file) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const msg = typeof data?.detail === "string" ? data.detail : `HTTP ${res.status}`;
-      return { ok: false, error: msg };
+      return { ok: false, status: res.status, error: msg };
     }
-    return { ok: true, data };
+    return { ok: true, status: res.status, data };
   } catch (err) {
-    return { ok: false, error: String(err?.message ?? err) };
+    return { ok: false, status: 0, error: String(err?.message ?? err) };
   }
 }
