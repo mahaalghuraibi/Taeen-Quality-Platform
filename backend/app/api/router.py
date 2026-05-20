@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.routes.admin_requests import router as admin_requests_router
 from app.api.routes.mask_detection import router as mask_detection_router
+from app.api.routes.people_count import router as people_count_router
 from app.api.routes.admin_settings import router as admin_settings_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.cameras import router as cameras_router
@@ -36,3 +37,4 @@ api_router.include_router(supervisor_cameras_router)
 api_router.include_router(users_router)
 api_router.include_router(admin_settings_router)
 api_router.include_router(mask_detection_router)
+api_router.include_router(people_count_router)

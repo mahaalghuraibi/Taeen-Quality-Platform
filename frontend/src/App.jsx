@@ -14,6 +14,7 @@ import AdminUsersPage from "./pages/AdminUsers.jsx";
 import AdminRequestsPage from "./pages/AdminRequests.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import MaskDetectionTest from "./pages/MaskDetectionTest.jsx";
+import PeopleCountTest from "./pages/PeopleCountTest.jsx";
 
 /** Same dashboard shell for all authenticated app routes (paths drive section via Dashboard). */
 const dashboardElement = (
@@ -78,6 +79,16 @@ const router = createBrowserRouter([
     element: (
       <PrivateRoute>
         <MaskDetectionTest />
+      </PrivateRoute>
+    ),
+  },
+
+  /* People counting test tool — requires login */
+  {
+    path: "/people-count-check",
+    element: (
+      <PrivateRoute>
+        <PeopleCountTest />
       </PrivateRoute>
     ),
   },
