@@ -13,6 +13,7 @@ import AdminRequestPage from "./pages/AdminRequest.jsx";
 import AdminUsersPage from "./pages/AdminUsers.jsx";
 import AdminRequestsPage from "./pages/AdminRequests.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
+import MaskDetectionTest from "./pages/MaskDetectionTest.jsx";
 
 /** Same dashboard shell for all authenticated app routes (paths drive section via Dashboard). */
 const dashboardElement = (
@@ -70,6 +71,16 @@ const router = createBrowserRouter([
   /* Legacy paths → clean URLs */
   { path: "/supervisor", element: <Navigate to="/analytics" replace /> },
   { path: "/monitoring", element: <Navigate to="/cameras" replace /> },
+
+  /* Mask detection test tool — requires login */
+  {
+    path: "/mask-check",
+    element: (
+      <PrivateRoute>
+        <MaskDetectionTest />
+      </PrivateRoute>
+    ),
+  },
 
   { path: "/", element: <LandingPage /> },
   { path: "*", element: <Navigate to="/" replace /> },
