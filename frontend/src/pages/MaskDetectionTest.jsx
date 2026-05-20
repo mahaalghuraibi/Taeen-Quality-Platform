@@ -240,6 +240,16 @@ export default function MaskDetectionTest() {
                 </tbody>
               </table>
             )}
+
+            {/* Model diagnostics */}
+            {result.model_info && (
+              <div style={styles.modelInfo}>
+                <span style={styles.modelInfoLabel}>النموذج:</span>
+                <span style={styles.modelInfoChip}>conf_mask {(result.model_info.conf_mask * 100).toFixed(0)}%</span>
+                <span style={styles.modelInfoChip}>conf_no_mask {(result.model_info.conf_no_mask * 100).toFixed(0)}%</span>
+                <span style={styles.modelInfoChip}>NMS IoU {result.model_info.nms_iou}</span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -392,5 +402,26 @@ const styles = {
     padding: "0.15rem 0.5rem",
     fontSize: "0.8rem",
     fontWeight: 600,
+  },
+  modelInfo: {
+    display: "flex",
+    gap: "0.5rem",
+    alignItems: "center",
+    flexWrap: "wrap",
+    fontSize: "0.78rem",
+    color: "#64748b",
+    paddingTop: "0.25rem",
+  },
+  modelInfoLabel: {
+    color: "#475569",
+    fontWeight: 600,
+  },
+  modelInfoChip: {
+    background: "#0f172a",
+    border: "1px solid #334155",
+    borderRadius: "0.3rem",
+    padding: "0.1rem 0.45rem",
+    fontFamily: "monospace",
+    color: "#94a3b8",
   },
 };

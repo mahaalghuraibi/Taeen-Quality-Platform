@@ -1,0 +1,35 @@
+# Mask / no-mask 2-class dataset for kitchen safety CCTV monitoring.
+#
+# Usage:
+#   python scripts/train_mask.py
+#   — or —
+#   yolo detect train data=dataset/mask_dataset.yaml model=yolov8s.pt epochs=50
+#
+# Folder layout expected under dataset/mask/ and dataset/no_mask/:
+#
+#   dataset/
+#     mask/
+#       train/images/    (class 0 training images)
+#       train/labels/    (YOLO .txt labels — class id 0)
+#       valid/images/
+#       valid/labels/
+#     no_mask/
+#       train/images/    (class 1 training images)
+#       train/labels/    (YOLO .txt labels — class id 1 — rewritten by organize_dataset.py)
+#       valid/images/
+#       valid/labels/
+#
+# After running scripts/organize_dataset.py the merged split is at:
+#   dataset/yolo_export/images/train|val
+#   dataset/yolo_export/labels/train|val
+#
+# Point train/val below to whichever layout you use.
+
+path: ..          # root = ska-system/  (one level above dataset/)
+train: dataset/yolo_export/images/train
+val:   dataset/yolo_export/images/val
+
+nc: 2
+names:
+  0: mask
+  1: no_mask
