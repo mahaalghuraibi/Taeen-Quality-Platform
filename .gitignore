@@ -44,3 +44,12 @@ media/tmp/
 
 ## OS/editor noise
 .DS_Store
+.claude/
+
+## Local test / runtime media (never commit)
+backend/scripts/test_frames/
+backend/media/
+screenshots/*.png
+screenshots/*.jpg
+screenshots/*.jpeg
+screenshots/*.webp

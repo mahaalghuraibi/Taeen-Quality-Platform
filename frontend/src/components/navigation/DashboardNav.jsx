@@ -13,12 +13,15 @@ export default function DashboardNav({
   setMobileNavOpen,
   logout,
   dashboardTitle,
+  /** Called before route change — pauses scroll-spy to prevent scroll/URL fight. */
+  onBeforeSectionNav,
 }) {
   const location = useLocation();
   const pathname = location.pathname.split("?")[0];
 
+  // Lightweight fixed navbar: solid bg (no backdrop-blur) for stable scroll performance.
   return (
-    <header className="fixed inset-x-0 top-0 z-[60] w-full border-b border-white/10 bg-[#0f172a]/97 shadow-[0_4px_16px_-10px_rgba(2,6,23,0.75)] backdrop-blur-[2px]">
+    <header className="fixed inset-x-0 top-0 z-[60] w-full border-b border-white/10 bg-[#0f172a]">
       <div className="mx-auto flex min-h-14 max-w-7xl items-center justify-between gap-2 px-3 py-2 sm:min-h-16 sm:gap-3 sm:px-6 lg:px-8">
         <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3 lg:flex-none">
           <button
@@ -56,10 +59,11 @@ export default function DashboardNav({
               <Link
                 key={item.sectionId || item.to}
                 to={item.to}
+                onClick={() => onBeforeSectionNav?.()}
                 aria-current={isActive ? "page" : undefined}
-                className={`nav-tab whitespace-nowrap rounded-[10px] px-3 py-2 text-sm font-medium transition ${
+                className={`nav-tab whitespace-nowrap rounded-[10px] px-3 py-2 text-sm font-medium ${
                   isActive
-                    ? "border border-[rgba(56,189,248,0.55)] bg-[rgba(59,130,246,0.15)] text-white shadow-[0_0_10px_rgba(56,189,248,0.2)]"
+                    ? "border border-[rgba(56,189,248,0.55)] bg-[rgba(59,130,246,0.15)] text-white"
                     : "border border-transparent bg-transparent text-[#aaa] hover:bg-[rgba(59,130,246,0.08)] hover:text-white"
                 }`}
               >
@@ -90,7 +94,7 @@ export default function DashboardNav({
 
       <nav
         id="dashboard-mobile-nav"
-        className={`border-t border-white/10 bg-[#0F172A]/95 lg:hidden ${mobileNavOpen ? "block" : "hidden"}`}
+        className={`border-t border-white/10 bg-[#0F172A] lg:hidden ${mobileNavOpen ? "block" : "hidden"}`}
         aria-hidden={!mobileNavOpen}
       >
         <div className="mx-auto flex max-w-7xl flex-col gap-1 px-3 py-3 sm:px-6">
@@ -100,11 +104,14 @@ export default function DashboardNav({
               <Link
                 key={item.sectionId || item.to}
                 to={item.to}
-                onClick={() => setMobileNavOpen(false)}
+                onClick={() => {
+                  onBeforeSectionNav?.();
+                  setMobileNavOpen(false);
+                }}
                 aria-current={isActive ? "page" : undefined}
-                className={`nav-tab rounded-[10px] px-3 py-2 text-sm font-medium transition ${
+                className={`nav-tab rounded-[10px] px-3 py-2 text-sm font-medium ${
                   isActive
-                    ? "border border-[rgba(56,189,248,0.65)] bg-[rgba(59,130,246,0.18)] text-white shadow-[0_0_12px_rgba(56,189,248,0.25)]"
+                    ? "border border-[rgba(56,189,248,0.65)] bg-[rgba(59,130,246,0.18)] text-white"
                     : "border border-transparent bg-transparent text-[#aaa] hover:bg-[rgba(59,130,246,0.08)] hover:text-white"
                 }`}
               >

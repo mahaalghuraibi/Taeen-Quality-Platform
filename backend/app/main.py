@@ -87,6 +87,11 @@ async def lifespan(_app: FastAPI):
         logger.warning(yolo_warning.strip())
 
     init_db()
+    from app.services.dish_image_storage import dish_media_dir, migrate_legacy_dish_images_to_dishes
+
+    dish_media_dir()
+    migrated = migrate_legacy_dish_images_to_dishes()
+    logger.info("DISH_MEDIA_DIR=%s (migrated %s legacy file(s))", settings.DISH_MEDIA_DIR, migrated)
     yield
 
 

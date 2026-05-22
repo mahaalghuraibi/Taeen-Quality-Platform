@@ -2,8 +2,9 @@
 # Docs: https://render.com/docs/blueprint-spec
 #
 # Set DATABASE_URL, SECRET_KEY, CORS_ALLOW_ORIGINS, SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD,
-# and AI keys in the Render dashboard (Environment) or via `envVars` below (use secrets).
-# YOLO weights: runtime download on first analyze-frame only (not during build).
+# DISH_MEDIA_DIR (persistent disk path), and AI keys in the Render dashboard.
+# YOLO PPE weights (hansung_ppe.pt): runtime download on first analyze-frame (YOLO_AUTO_DOWNLOAD).
+# mask_best.pt / glove_best.pt / hairnet_best.pt are NOT in git — upload to persistent disk or train locally.
 
 services:
   - type: web

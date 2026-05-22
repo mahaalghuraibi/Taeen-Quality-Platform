@@ -52,3 +52,4 @@ class SupervisorAlertOut(BaseModel):
     status: str
     resolved_at: datetime | None = None
     resolved_by: str | None = None
+    image_data_url: str | None = None

@@ -38,6 +38,8 @@ VIOLATION_TYPE_LABELS: dict[str, str] = {
     "no_gloves": "عدم ارتداء القفازات",
     "no_headcover": "عدم ارتداء غطاء الرأس / قبعة الشيف",
     "improper_uniform": "عدم ارتداء الزي الرسمي",
+    "no_uniform": "عدم ارتداء الزي الرسمي",
+    "wet_floor": "أرضية مبللة",
     "trash_on_floor": "نفايات على الأرض",
     "improper_waste_area": "موقع النفايات غير ملائم",
     "no_person_in_zone": "لم يُرصد أشخاص في المنطقة",

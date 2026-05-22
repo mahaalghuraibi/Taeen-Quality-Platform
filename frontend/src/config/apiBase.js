@@ -52,9 +52,19 @@ export function clearStaleApiBaseOverride() {
 
 clearStaleApiBaseOverride();
 
+/** Local dev: point <img src> and fetch at the FastAPI backend (port 8000). */
+function devApiBaseDefault() {
+  if (import.meta.env.PROD) return "";
+  if (typeof window === "undefined") return "http://127.0.0.1:8000";
+  const h = String(window.location.hostname || "").toLowerCase();
+  if (h === "localhost" || h === "127.0.0.1") return "http://127.0.0.1:8000";
+  return "";
+}
+
 const fromEnv = normalizeBase(import.meta.env.VITE_API_BASE_URL);
 
-export const API_BASE_URL = fromEnv || inferProductionApiBase() || storageApiBase();
+export const API_BASE_URL =
+  fromEnv || inferProductionApiBase() || devApiBaseDefault() || storageApiBase();
 
 /**
  * @param {string} path - Absolute path starting with `/` or full `http(s)://`, `blob:`, `data:` URL.

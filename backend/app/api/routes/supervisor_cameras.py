@@ -1,7 +1,7 @@
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -70,6 +70,7 @@ def _alert_to_out(row: MonitoringAlert) -> SupervisorAlertOut:
         status=row.status,
         resolved_at=row.resolved_at,
         resolved_by=row.resolved_by_name,
+        image_data_url=row.image_data_url,
     )
 
 
@@ -153,6 +154,48 @@ def list_supervisor_alerts(
         q = q.filter(MonitoringAlert.created_at < _riyadh_day_end_exclusive_utc(date_to))
     rows = q.limit(limit).all()
     return [_alert_to_out(r) for r in rows]
+
+
+_ALLOWED_STATUSES = {"open", "under_review", "resolved"}
+
+
+@router.patch("/alerts/{alert_id}/status", response_model=SupervisorAlertOut)
+def update_supervisor_alert_status(
+    alert_id: int,
+    new_status: str = Body(..., embed=True, alias="status"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SupervisorAlertOut:
+    """Set alert status to open / under_review / resolved."""
+    _ensure_supervisor_branch(current_user)
+    if new_status not in _ALLOWED_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"الحالة غير صالحة. القيم المسموحة: {', '.join(sorted(_ALLOWED_STATUSES))}",
+        )
+    row = (
+        db.query(MonitoringAlert)
+        .filter(MonitoringAlert.id == alert_id, MonitoringAlert.tenant_id == current_user.tenant_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="التنبيه غير موجود")
+    if current_user.role == "supervisor" and row.branch_id != current_user.branch_id:
+        raise HTTPException(status_code=403, detail="ليس لديك صلاحية لهذا التنبيه")
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    row.status = new_status
+    if new_status == "resolved":
+        row.resolved_at = now
+        row.resolved_by_id = current_user.id
+        row.resolved_by_name = current_user.full_name or current_user.username or current_user.email
+    elif new_status != "resolved":
+        row.resolved_at = None
+        row.resolved_by_id = None
+        row.resolved_by_name = None
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _alert_to_out(row)
 
 
 @router.patch("/alerts/{alert_id}/resolve", response_model=SupervisorAlertOut)

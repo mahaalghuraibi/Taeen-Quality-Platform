@@ -1,4 +1,4 @@
-# Backend — منصة تعيين الجودة · Taeen Quality Platform
+# Backend — منصة عين الجودة · Ayn Al-Jawdah Quality Platform
 
 FastAPI service exposing REST APIs for **authentication**, **users**, **dishes**, **monitoring**, **cameras**, **reports**, and **supervisor** workflows.
 

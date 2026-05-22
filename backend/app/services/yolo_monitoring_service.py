@@ -245,11 +245,11 @@ _MIN_BOX_CONF_INT: int = 26
 # Recall pass (lower YOLO conf) drops safe boxes by design — except mask/glove safe signals needed for dark masks / dim light.
 _MIN_RECALL_SAFE_MASK_GLOVE_CONF_INT: int = 26
 # COCO person-only detector (YOLOv8n/s hub or PERSON_MODEL_PATH).
-_PERSON_DETECT_CONF_FLOAT: float = 0.28
+_PERSON_DETECT_CONF_FLOAT: float = 0.45
 _COCO_PERSON_CLASS_ID: int = 0
 
 # Person detection must pass before any per-worker PPE violation is surfaced (reduces orphan-PPE false positives).
-_MIN_GOOD_PERSON_CONF_INT: int = 38
+_MIN_GOOD_PERSON_CONF_INT: int = 45
 _MIN_PERSON_BOX_AREA_FRAC: float = 0.0016
 
 # Conservative geometric gates: require enough on-frame resolution before implying mask/gloves/head/uniform breaches.
@@ -267,8 +267,9 @@ _VHEAD_MIN_BH_FRAC: float = 0.046
 _VTORSO_MIN_AREA_FRAC: float = 0.0042
 _VTORSO_MIN_BH_FRAC: float = 0.092
 
-# Head-cover: slightly higher bar than mask/gloves for FP control; kept below old 0.62–0.65 to reduce false negatives.
-_HEADCOVER_VIOLATION_MIN_CONF_INT: int = 58  # ~0.58; mask/gloves unchanged below
+# Head-cover threshold: lowered to 45% — webcam shots of bare heads register at 45–55% routinely.
+# Multi-frame streak (_HEADCOVER_STREAK_FRAMES) + per-person tracker still suppress flicker.
+_HEADCOVER_VIOLATION_MIN_CONF_INT: int = 45
 # Require this many consecutive analyzed frames with a pending head-cover breach before surfacing an alert.
 _HEADCOVER_STREAK_FRAMES: int = 2
 _HAT_HEURISTIC_SAFE_CONF: int = 78
@@ -333,6 +334,22 @@ _headcover_streak_lock = threading.Lock()
 # (camera_key, person_index_1based) -> consecutive frame count for pending no_headcover reports
 _headcover_streak_by_cam_person: dict[tuple[str, int], int] = {}
 
+# ── Supplementary dedicated-model PPE thresholds + temporal confirmation ─────────────────────────
+# Minimum confidence (0-100) for a supplementary violation or compliant decision to be accepted.
+# Tuned for production webcams: 60% was excluding real violations that webcams emit
+# routinely at 40–55% confidence (oblique angles, mid-distance shots, varied lighting).
+# Multi-frame confirmation (_SUPPLEMENT_CONFIRM_FRAMES) handles flicker, so we can
+# safely accept signal at 40%+.
+_SUPPLEMENT_VIOLATION_CONF_MIN: int = 42
+_SUPPLEMENT_CONFIRM_CONF_MIN: int = 45
+# Consecutive positive frames needed before flipping a check card to green "compliant".
+# Reduced from 3 → 2 to feel responsive on live feeds (~6–10 s instead of ~15 s).
+_SUPPLEMENT_CONFIRM_FRAMES: int = 2
+
+_supplement_compliant_streak_lock = threading.Lock()
+# (camera_key, check_type) -> consecutive frame count where PPE was positively confirmed at >= 60%
+_supplement_compliant_streak: dict[tuple[str, str], int] = {}
+
 # When glove violation competes with glove safe, favour violation if within this gap (recall).
 _IMPLICIT_VIOLATION_CONF: int = 40
 # Only infer missing mask/glove violations when another PPE breach exists — never helmet/uniform:
@@ -352,6 +369,23 @@ def _is_bin_like_class(cls_name: str) -> bool:
         return True
     parts = n.split("_")
     return len(parts) >= 2 and parts[-1] == "bin"
+
+
+def _supplement_compliant_mark(cam_key: str, check_type: str, is_positive: bool) -> bool:
+    """
+    Temporal smoothing for supplementary PPE compliant confirmation.
+    Returns True only when the streak reaches _SUPPLEMENT_CONFIRM_FRAMES (emit compliant).
+    Resets streak whenever the signal drops or a violation fires.
+    """
+    k = (cam_key, check_type)
+    with _supplement_compliant_streak_lock:
+        if not is_positive:
+            _supplement_compliant_streak.pop(k, None)
+            return False
+        prev = _supplement_compliant_streak.get(k, 0)
+        nxt = prev + 1
+        _supplement_compliant_streak[k] = nxt
+        return nxt >= _SUPPLEMENT_CONFIRM_FRAMES
 
 
 def _resolve_person_model_path() -> str | None:
@@ -1834,6 +1868,186 @@ def _analyze_frame_yolo_core(
             "status": "new",
         })
 
+    # === Region-aware PPE checks ===
+    # For each detected person, runs each dedicated model on the relevant body
+    # region crop (face/head/hands) rather than the full frame.
+    # This prevents the hairnet model from firing on gloved hands and the mask
+    # model from hallucinating on empty backgrounds.
+    _supplementary_results: dict[str, dict] = {}
+    _configured_models: list[str] = []
+    _missing_models: list[str] = []
+    _annotated_evidence_b64: str | None = None
+
+    if exact_people > 0:
+        try:
+            from app.services.ppe_region_pipeline import analyze_ppe_regions  # noqa: PLC0415
+            from app.services.ai_violation_service import _MODELS_DIR as _AV_MODELS_DIR  # noqa: PLC0415
+
+            _MODEL_FILES = {
+                "no_mask":      _AV_MODELS_DIR / "mask_best.pt",
+                "no_headcover": _AV_MODELS_DIR / "hairnet_best.pt",
+                "no_gloves":    _AV_MODELS_DIR / "glove_best.pt",
+            }
+            _missing_models = [k for k, p in _MODEL_FILES.items() if not p.is_file()]
+            _configured_models = [k for k, p in _MODEL_FILES.items() if p.is_file()]
+
+            if _configured_models:
+                _pp_results, _agg, _annotated_evidence_b64 = analyze_ppe_regions(
+                    pil_rgb=pil_rgb,
+                    person_boxes=person_boxes,
+                    person_confs=list(person_confs),
+                    cam_key=cam_key,
+                )
+
+                _LABELS_AR = {
+                    "no_mask":      "الكمامة",
+                    "no_headcover": "غطاء الرأس",
+                    "no_gloves":    "القفازات",
+                }
+
+                # Build supplementary_results for the UI PPE cards.
+                for vtype, agg_check in _agg.items():
+                    _supplementary_results[vtype] = {
+                        "status":           agg_check.status,
+                        "confidence":       agg_check.confidence,
+                        "violation_detected": agg_check.status == "violation",
+                        "person_count":     agg_check.person_count,
+                        "violating_count":  agg_check.violating_count,
+                        "needs_review_count": agg_check.needs_review_count,
+                    }
+
+                # Emit one violation entry per violating person (enables correct
+                # per-person count in the UI and per-type dedup in violation_tracker).
+                _existing_vio_keys: set[tuple[str, int | None]] = {
+                    (str(v.get("type", "")), v.get("person_index"))
+                    for v in violations_flat
+                    if isinstance(v, dict) and v.get("type")
+                }
+                for _person in _pp_results:
+                    for _attr, _vtype in [
+                        ("mask",      "no_mask"),
+                        ("headcover", "no_headcover"),
+                        ("gloves",    "no_gloves"),
+                    ]:
+                        _item = getattr(_person, _attr)
+                        if _item.status != "violation":
+                            continue
+                        _key = (_vtype, _person.person_idx)
+                        if _key in _existing_vio_keys:
+                            continue  # already surfaced by main YOLO
+                        _existing_vio_keys.add(_key)
+                        _label = _LABELS_AR.get(_vtype, _vtype)
+                        violations_flat.append({
+                            "type":         _vtype,
+                            "label_ar":     _label,
+                            "confidence":   _item.confidence,
+                            "reason_ar":    f"{_label} مفقود — عامل {_person.person_idx}.",
+                            "description":  f"Worker {_person.person_idx}: {_attr} not detected in region.",
+                            "status":       "new",
+                            "person_index": _person.person_idx,
+                            "source":       "region_pipeline",
+                        })
+                        logger.info(
+                            "REGION PPE VIOLATION: type=%s person=%d conf=%d",
+                            _vtype, _person.person_idx, _item.confidence,
+                        )
+
+            for _vtype in _missing_models:
+                _supplementary_results[_vtype] = {
+                    "status": "not_configured",
+                    "message": f"Model file not found: {_MODEL_FILES[_vtype].name}",
+                }
+
+        except ImportError as _exc:
+            logger.warning("ppe_region_pipeline unavailable: %s", _exc)
+        except Exception as _exc:
+            logger.warning("Region PPE pipeline failed: %s", _exc)
+
+    # ── Scene + uniform heuristic checks (wet floor, floor trash, uniform) ───
+    # Honest pipeline: deterministic CV signal flagged as needs_review (amber),
+    # never auto-confirmed without a CCTV-trained model. Surfaces three new
+    # supplementary_checks entries: no_uniform / wet_floor / trash_on_floor.
+    try:
+        from app.services import scene_checks_service as _scene_svc  # noqa: PLC0415
+        import numpy as _np  # noqa: PLC0415
+
+        _frame_rgb_arr = _np.asarray(pil_rgb)  # H,W,3 RGB
+        _frame_bgr_arr = _frame_rgb_arr[..., ::-1].copy() if _frame_rgb_arr.ndim == 3 else _frame_rgb_arr
+
+        # — Wet floor —
+        _wet = _scene_svc.wet_floor_check(_frame_bgr_arr, person_boxes)
+        if _wet.status == "needs_review":
+            _supplementary_results["wet_floor"] = {
+                "status":     "needs_review",
+                "confidence": _wet.confidence,
+                "message":    _wet.message,
+                "heuristic":  True,
+            }
+        elif _wet.status == "ok":
+            _supplementary_results["wet_floor"] = {
+                "status":     "ok",
+                "confidence": 0,
+                "message":    _wet.message,
+                "heuristic":  True,
+            }
+        elif _wet.status == "unavailable":
+            _supplementary_results["wet_floor"] = {
+                "status":     "not_configured",
+                "message":    _wet.message,
+            }
+        logger.info("SCENE wet_floor: status=%s conf=%d", _wet.status, _wet.confidence)
+
+        # — Floor trash —
+        _trash = _scene_svc.floor_trash_check(_frame_bgr_arr, person_boxes)
+        if _trash.status == "needs_review":
+            _supplementary_results["trash_on_floor"] = {
+                "status":     "needs_review",
+                "confidence": _trash.confidence,
+                "message":    _trash.message,
+                "heuristic":  True,
+            }
+        elif _trash.status == "ok":
+            _supplementary_results["trash_on_floor"] = {
+                "status":     "ok",
+                "confidence": 0,
+                "message":    _trash.message,
+                "heuristic":  True,
+            }
+        elif _trash.status == "unavailable":
+            _supplementary_results["trash_on_floor"] = {
+                "status":     "not_configured",
+                "message":    _trash.message,
+            }
+        logger.info("SCENE trash_on_floor: status=%s conf=%d", _trash.status, _trash.confidence)
+
+        # — Per-person uniform —
+        if exact_people > 0 and person_boxes:
+            _uni_per_person = _scene_svc.uniform_check_per_person(_frame_bgr_arr, person_boxes)
+            _uni_agg = _scene_svc.aggregate_uniform_results(_uni_per_person)
+            _supplementary_results["no_uniform"] = {
+                "status":              _uni_agg.status,
+                "confidence":          _uni_agg.confidence,
+                "message":             _uni_agg.message,
+                "person_count":        len(_uni_per_person),
+                "violating_count":     0,
+                "needs_review_count":  sum(1 for r in _uni_per_person if r.status == "needs_review"),
+                "heuristic":           True,
+            }
+            logger.info(
+                "SCENE uniform aggregate: status=%s conf=%d total=%d needs_review=%d",
+                _uni_agg.status, _uni_agg.confidence, len(_uni_per_person),
+                sum(1 for r in _uni_per_person if r.status == "needs_review"),
+            )
+        else:
+            _supplementary_results["no_uniform"] = {
+                "status":  "unavailable",
+                "message": "لا يوجد أشخاص لفحص الزي.",
+            }
+    except ImportError as _exc:
+        logger.warning("scene_checks_service unavailable: %s", _exc)
+    except Exception as _exc:
+        logger.warning("Scene/uniform heuristic pipeline failed: %s", _exc, exc_info=True)
+
     analyzed_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     payload = _finalize_payload(
@@ -1871,7 +2085,7 @@ def _analyze_frame_yolo_core(
     ppe_notice_ar: str | None = None
     if not has_quality_person and len(ppe_flat) > 0:
         ppe_notice_ar = (
-            "لم يُرصد شخص واضح بثقة كافية في الإطار؛ لم تُبلَّغ مخالفات معدات السلامة الشخصية المرتبطة بالأشخاص."
+            "لم يُرصد شخص واضح بثقة كافية في الإطار؛ لم تُبلَغ مخالفات معدات السلامة الشخصية المرتبطة بالأشخاص."
         )
 
     rej_counts = dict(Counter(str(r.get("reason", "")) for r in rejected_debug if r.get("reason")))
@@ -1888,6 +2102,52 @@ def _analyze_frame_yolo_core(
         int(yolo_diag_out.get("rejected_no_person_count") or 0),
     )
 
+    # When PPE violations were rejected because person quality was insufficient,
+    # the result MUST NOT be reported as "clean" -- that is a false negative.
+    if rn_no_person > 0 and not has_quality_person:
+        payload["overall_status"] = "cannot_verify"
+        payload["quality_pct"] = 50
+        payload["summary"] = (
+            "تعذّر التحقق من معدات الحماية — تم رصد تحركات في الإطار لكن لم يُؤكد وجود شخص بجودة كافية. "
+            "وجّه الكاميرا نحو العامل بشكل أوضح."
+        )
+        payload["needs_review"] = True
+        logger.warning(
+            "YOLO: overriding clean to cannot_verify -- rn_no_person=%d ppe_raw=%d",
+            rn_no_person, int(yolo_diag_out.get("ppe_raw_count") or 0),
+        )
+
+    # Person detected but required PPE models are not installed → cannot verify compliance.
+    # This triggers when keremberk detects nothing AND dedicated models (glove/hairnet) are missing.
+    if (
+        exact_people > 0
+        and _missing_models
+        and payload.get("overall_status") == "clean"
+    ):
+        missing_names = {"no_gloves": "glove_best.pt", "no_headcover": "hairnet_best.pt", "no_mask": "mask_best.pt"}
+        missing_files = [missing_names.get(m, m) for m in _missing_models]
+        payload["overall_status"] = "cannot_verify"
+        payload["quality_pct"] = 50
+        payload["summary"] = (
+            "تعذّر التحقق الكامل من معدات الحماية — "
+            "نماذج PPE التالية غير مُهيَّأة: "
+            + "، ".join(missing_files)
+            + ". لا يمكن تأكيد الامتثال."
+        )
+        payload["needs_review"] = True
+        logger.warning(
+            "YOLO: cannot_verify — person detected (count=%d) but PPE models missing: %s",
+            exact_people,
+            missing_files,
+        )
+
+    raw_detected_classes = sorted(set(d.get("class_name", "") for d in ppe_flat if d.get("class_name")))
+
+    # If the region pipeline produced an annotated evidence frame, attach it so
+    # the monitoring route can use it as the alert snapshot instead of the raw frame.
+    if _annotated_evidence_b64:
+        payload["annotated_frame"] = _annotated_evidence_b64
+
     payload["frame_report"] = {
         "analyzed_at": analyzed_at,
         "frame_width": iw,
@@ -1902,6 +2162,22 @@ def _analyze_frame_yolo_core(
         "ppe_rejected_counts_by_reason": rej_counts,
         "yolo_diag": yolo_diag_out,
         **({"ppe_notice_ar": ppe_notice_ar} if ppe_notice_ar else {}),
+        "debug": {
+            "people_count": exact_people,
+            "person_boxes_count": int(yolo_diag_out.get("person_boxes_count") or 0),
+            "person_confs": list(person_confs[:10]),
+            "ppe_raw_count": int(yolo_diag_out.get("ppe_raw_count") or 0),
+            "detected_classes": raw_detected_classes,
+            "rejected_no_person_count": int(rn_no_person),
+            "rejected_reasons": rej_counts,
+            "has_quality_person": bool(has_quality_person),
+            "person_model_loaded": bool(yolo_diag_out.get("person_model_loaded")),
+            "person_model_source": yolo_diag_out.get("person_model_source"),
+            "configured_models": _configured_models,
+            "missing_models": _missing_models,
+            "supplementary_checks": _supplementary_results,
+            "created_violations": [v.get("type") for v in violations_ok],
+        },
         "violations_detail": [
             {
                 "type": v["type"],

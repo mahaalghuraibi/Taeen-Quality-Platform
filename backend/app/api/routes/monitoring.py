@@ -15,6 +15,7 @@ from app.models.monitoring_alert import MonitoringAlert
 from app.models.user import User
 from app.schemas.monitoring import MonitoringAnalyzeResponse, MonitoringCheckOut, MonitoringViolationOut
 from app.services.monitoring_ai_service import analyze_monitoring_frame, monitoring_image_snapshot
+from app.services.violation_tracker import default_tracker as violation_tracker
 from app.services.yolo_monitoring_service import YOLO_BUSY_MESSAGE
 
 router = APIRouter(
@@ -27,6 +28,38 @@ logger = logging.getLogger(__name__)
 
 # Observational violation types that inform the UI but should not create DB alert rows.
 _NO_ALERT_TYPES: frozenset[str] = frozenset({"no_person_in_zone", "unclear_camera_angle"})
+
+# Multi-frame confirmation + cooldown live in `violation_tracker` (per camera + type + person).
+# DB-level dedup window mirrors tracker cooldown so a process restart never produces a flood.
+_DB_DEDUP_SECONDS = violation_tracker.cooldown_seconds
+
+# Per-type minimum confidence (0–100 int) required to write a DB alert row.
+# Violations below this threshold are surfaced to the operator UI as "needs_review"
+# but do NOT create a persistent alert in the database.
+#
+# Tuned for production webcams: real kitchens give 40–55% confidence routinely.
+# Multi-frame confirmation (streak_required=2) + per-person cooldown still prevents
+# flicker false positives, so we can keep these thresholds reasonable.
+_CONFIRMED_CONF_THRESHOLDS: dict[str, int] = {
+    # Headcover: model fires at 26–52%; alert at 35%+ (will create some alerts)
+    "no_headcover":     35,
+    # Mask: model max ~28% (5 epochs, broken); rarely creates alerts but floor is now 22
+    "no_mask":          38,
+    # Gloves: OPTIONAL CHECK — threshold set above model max (54%) so no DB alerts are
+    # created until the gloves model is retrained and _GLOVES_OPTIONAL set to False.
+    # Violations still appear in the UI as "needs_review" (ppe_region_pipeline.py).
+    "no_gloves":        90,
+    "improper_uniform": 42,
+    "trash_on_floor":   42,
+    "improper_waste_area": 42,
+    "trash_wrong_location": 42,
+    "wet_floor":        42,
+}
+_CONFIRMED_CONF_DEFAULT: int = 38
+
+# Band below _CONFIRMED_CONF_THRESHOLDS but above this floor → "needs_review" in the response.
+# Lowered from 30 → 22 so low-confidence mask detections (model max ~28%) appear in UI.
+_NEEDS_REVIEW_FLOOR: int = 22
 
 
 def _skipped_busy_response() -> MonitoringAnalyzeResponse:
@@ -151,35 +184,83 @@ async def analyze_frame(
     payload["location"] = eff_location
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    snapshot = monitoring_image_snapshot(image_bytes)
+    # Prefer the annotated evidence frame (with PPE region boxes drawn) produced
+    # by the region pipeline. Fall back to the raw frame if unavailable.
+    snapshot = payload.pop("annotated_frame", None) or monitoring_image_snapshot(image_bytes)
     alerts_created = 0
-    # Shorter window so successive snapshots / video frames can register distinct alerts without changing AI output.
-    cutoff = now - timedelta(seconds=14)
+    cutoff = now - timedelta(seconds=_DB_DEDUP_SECONDS)
     inserted_keys: set[tuple[str, int | None]] = set()
     persist_alerts = not settings.MONITORING_AI_DEMO_MODE and str(payload.get("provider") or "") != "demo"
 
-    for v in (payload.get("violations") or []) if persist_alerts else []:
-        if not isinstance(v, dict):
-            continue
-        if v.get("alias_of"):
+    # Reset streaks for violations absent from this frame (per-camera scope).
+    current_vtypes: set[str] = {
+        str(v.get("type", "")).strip()
+        for v in (payload.get("violations") or [])
+        if isinstance(v, dict) and not v.get("alias_of")
+    }
+    violation_tracker.reset_absent_types(
+        current_user.tenant_id, camera_id, current_vtypes,
+    )
+
+    # First pass — classify everything for the UI (needs_review vs confirmed).
+    for v in (payload.get("violations") or []):
+        if not isinstance(v, dict) or v.get("alias_of"):
             continue
         vtype = str(v.get("type", "")).strip()
         vconf = int(v.get("confidence", 0) or 0)
+        if vtype in _NO_ALERT_TYPES or not vtype:
+            continue
+        conf_threshold = _CONFIRMED_CONF_THRESHOLDS.get(vtype, _CONFIRMED_CONF_DEFAULT)
+        if vconf < _NEEDS_REVIEW_FLOOR:
+            logger.debug("audit skip_junk type=%s conf=%d floor=%d", vtype, vconf, _NEEDS_REVIEW_FLOOR)
+            v["status"] = "suppressed"
+        elif vconf < conf_threshold:
+            logger.info(
+                "audit needs_review type=%s conf=%d threshold=%d camera=%s",
+                vtype, vconf, conf_threshold, eff_name,
+            )
+            v["status"] = "needs_review"
+
+    # Second pass — multi-frame confirmation + cooldown before any DB write.
+    for v in (payload.get("violations") or []) if persist_alerts else []:
+        if not isinstance(v, dict) or v.get("alias_of"):
+            continue
+        vtype = str(v.get("type", "")).strip()
+        vconf = int(v.get("confidence", 0) or 0)
+        vstatus = str(v.get("status", "new")).strip()
         pin = v.get("person_index")
         try:
             pin_int = int(pin) if pin is not None else None
         except (TypeError, ValueError):
             pin_int = None
+
+        if vtype in _NO_ALERT_TYPES or not vtype:
+            continue
+        if vstatus in ("suppressed", "needs_review"):
+            logger.debug("audit skip_no_db type=%s conf=%d status=%s", vtype, vconf, vstatus)
+            continue
+        if vconf < _CONFIRMED_CONF_THRESHOLDS.get(vtype, _CONFIRMED_CONF_DEFAULT):
+            continue
+
         dedupe_key = (vtype, pin_int)
-        # Observational types inform the UI only — do not create alert rows.
-        if vtype in _NO_ALERT_TYPES:
-            continue
-        # Finalize_payload already applies per-type thresholds; this is only a hard junk floor (noise < ~37%).
-        if not vtype or vconf < 32:
-            continue
         if dedupe_key in inserted_keys:
             continue
-        inserted_keys.add(dedupe_key)
+
+        streak, confirmed = violation_tracker.register(
+            tenant_id=current_user.tenant_id,
+            camera_id=camera_id,
+            vtype=vtype,
+            person_index=pin_int,
+            confidence=vconf,
+        )
+        if not confirmed:
+            logger.debug(
+                "audit streak_building type=%s conf=%d streak=%d/%d camera=%s person=%s",
+                vtype, vconf, streak, violation_tracker.streak_required, eff_name, pin_int,
+            )
+            continue
+
+        # DB-level dedup as durable backstop (covers process restarts).
         if _has_recent_duplicate(
             db,
             tenant_id=current_user.tenant_id,
@@ -187,7 +268,17 @@ async def analyze_frame(
             violation_type=vtype,
             since=cutoff,
         ):
+            logger.debug(
+                "audit db_dedup_skip type=%s conf=%d window=%ds camera=%s",
+                vtype, vconf, _DB_DEDUP_SECONDS, eff_name,
+            )
             continue
+
+        inserted_keys.add(dedupe_key)
+        logger.info(
+            "audit ALERT_CREATED type=%s conf=%d streak=%d camera=%s location=%s person=%s",
+            vtype, vconf, streak, eff_name, eff_location, pin_int,
+        )
         row = MonitoringAlert(
             tenant_id=current_user.tenant_id,
             branch_id=current_user.branch_id,

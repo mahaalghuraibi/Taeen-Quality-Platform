@@ -12,11 +12,13 @@ export const RESTAURANT_CONNECTION_TYPES = {
   UPLOADED_VIDEO: "uploaded_video",
 };
 
+// Only real CCTV connection types are exposed in the UI now. DEVICE_WEBCAM and
+// UPLOADED_VIDEO remain in RESTAURANT_CONNECTION_TYPES (above) for backward-compat
+// with any saved local configs, but they are deliberately omitted from the labels
+// map so the select dropdown shows only the two operator-facing options.
 export const CONNECTION_TYPE_LABELS_AR = {
   [RESTAURANT_CONNECTION_TYPES.IP_CAMERA]: "كاميرا IP",
   [RESTAURANT_CONNECTION_TYPES.RTSP_URL]: "رابط RTSP",
-  [RESTAURANT_CONNECTION_TYPES.DEVICE_WEBCAM]: "كاميرا الجهاز",
-  [RESTAURANT_CONNECTION_TYPES.UPLOADED_VIDEO]: "اختبار فيديو مرفوع",
 };
 
 /** @typedef {{

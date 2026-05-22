@@ -11,6 +11,7 @@ from app.db.session import get_db
 from app.models.dish_record import DishRecord
 from app.models.user import User
 from app.schemas.dish_record import DishRecordOut, SupervisorEditApprovePayload, SupervisorRejectPayload
+from app.services.dish_record_serialize import dish_record_to_out, dish_records_to_out
 
 router = APIRouter(
     prefix="/supervisor/reviews",
@@ -50,7 +51,7 @@ def list_review_records(
     status_filter: str = Query(default="pending_review"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> list[DishRecord]:
+) -> list[DishRecordOut]:
     _ensure_supervisor_branch(current_user)
     q = _q_for_tenant(db, current_user)
     if status_filter and status_filter != "all":
@@ -88,10 +89,10 @@ def list_review_records(
             r.employee_email = u.email
 
     if not employee:
-        return rows
+        return dish_records_to_out(rows)
     key = employee.strip().lower()
     if not key:
-        return rows
+        return dish_records_to_out(rows)
     out: list[DishRecord] = []
     for r in rows:
         u = user_map.get(r.user_id)
@@ -99,7 +100,7 @@ def list_review_records(
             continue
         if key in (u.email or "").lower() or key in (u.full_name or "").lower() or key in (u.username or "").lower():
             out.append(r)
-    return out
+    return dish_records_to_out(out)
 
 
 @router.patch("/{dish_id}/approve", response_model=DishRecordOut)
@@ -107,7 +108,7 @@ def approve_review_record(
     dish_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> DishRecord:
+) -> DishRecordOut:
     _ensure_supervisor_branch(current_user)
     dish = _get_or_404(db, dish_id, current_user)
     old_status = dish.status
@@ -130,7 +131,7 @@ def approve_review_record(
     )
     if old_status == dish.status and old_needs_review == bool(dish.needs_review):
         logger.warning("supervisor_review approve no-state-change dish_id=%s", dish.id)
-    return dish
+    return dish_record_to_out(dish)
 
 
 @router.patch("/{dish_id}/reject", response_model=DishRecordOut)
@@ -139,7 +140,7 @@ def reject_review_record(
     payload: SupervisorRejectPayload,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> DishRecord:
+) -> DishRecordOut:
     _ensure_supervisor_branch(current_user)
     dish = _get_or_404(db, dish_id, current_user)
     old_status = dish.status
@@ -164,7 +165,7 @@ def reject_review_record(
     )
     if old_status == dish.status and old_needs_review == bool(dish.needs_review):
         logger.warning("supervisor_review reject no-state-change dish_id=%s", dish.id)
-    return dish
+    return dish_record_to_out(dish)
 
 
 @router.patch("/{dish_id}/edit-approve", response_model=DishRecordOut)
@@ -173,7 +174,7 @@ def edit_approve_review_record(
     payload: SupervisorEditApprovePayload,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> DishRecord:
+) -> DishRecordOut:
     _ensure_supervisor_branch(current_user)
     dish = _get_or_404(db, dish_id, current_user)
     old_status = dish.status
@@ -200,4 +201,4 @@ def edit_approve_review_record(
     )
     if old_status == dish.status and old_needs_review == bool(dish.needs_review):
         logger.warning("supervisor_review edit_approve no-state-change dish_id=%s", dish.id)
-    return dish
+    return dish_record_to_out(dish)

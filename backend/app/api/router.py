@@ -1,5 +1,7 @@
 from fastapi import APIRouter
 
+from app.api.routes.ai_violations import router as ai_violations_router
+from app.api.routes.ai_status import router as ai_status_router
 from app.api.routes.admin_requests import router as admin_requests_router
 from app.api.routes.mask_detection import router as mask_detection_router
 from app.api.routes.people_count import router as people_count_router
@@ -8,6 +10,7 @@ from app.api.routes.auth import router as auth_router
 from app.api.routes.cameras import router as cameras_router
 from app.api.routes.detect_dish import router as detect_dish_router
 from app.api.routes.dishes import router as dishes_router
+from app.api.routes.dish_media import router as dish_media_router
 from app.api.routes.me import profile_router, router as me_router
 from app.api.routes.meal_types import router as meal_types_router
 from app.api.routes.monitoring import router as monitoring_router
@@ -27,6 +30,7 @@ api_router.include_router(profile_router)
 api_router.include_router(meal_types_router)
 api_router.include_router(admin_requests_router)
 api_router.include_router(dishes_router)
+api_router.include_router(dish_media_router)
 api_router.include_router(detect_dish_router)
 api_router.include_router(monitoring_router)
 api_router.include_router(cameras_router)
@@ -38,3 +42,5 @@ api_router.include_router(users_router)
 api_router.include_router(admin_settings_router)
 api_router.include_router(mask_detection_router)
 api_router.include_router(people_count_router)
+api_router.include_router(ai_violations_router)
+api_router.include_router(ai_status_router)

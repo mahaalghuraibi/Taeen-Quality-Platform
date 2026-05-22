@@ -141,6 +141,10 @@ class DishRecordOut(BaseModel):
 
     id: int
     image_url: str
+    # False when image_url points at /api/v1/dishes/files/... but the file is missing on disk.
+    image_available: bool = True
+    # On-disk path relative to backend/media/, e.g. dishes/{uuid}.jpg
+    storage_path: str | None = None
     predicted_label: str
     confirmed_label: str | None
     quantity: int

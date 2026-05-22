@@ -31,11 +31,13 @@ import SupervisorExecutiveHero from "../components/supervisor/SupervisorExecutiv
 import SupervisorSummaryCards from "../components/supervisor/SupervisorSummaryCards.jsx";
 import SupervisorMonitoringOverview from "../components/supervisor/SupervisorMonitoringOverview.jsx";
 import SupervisorAnalyticsRecharts from "../components/supervisor/SupervisorAnalyticsRecharts.jsx";
-import ReportsAnalyticsCharts from "../components/supervisor/ReportsAnalyticsCharts.jsx";
+import ReportsHub from "../components/reports/ReportsHub.jsx";
 import StickyAnalyticsSummaryBar from "../components/supervisor/StickyAnalyticsSummaryBar.jsx";
 import ExpandMoreList from "../components/shared/ExpandMoreList.jsx";
 import { useExpandMoreList } from "../hooks/useExpandMoreList.js";
 import EmptyState from "../components/shared/EmptyState.jsx";
+import FoodImageThumb from "../components/shared/FoodImageThumb.jsx";
+import { dishReportImageLink, resolveDishImageUrl } from "../utils/dishHelpers.js";
 import { PLATFORM_BRAND, dashboardTitleForRole } from "../constants/branding.js";
 import {
   DEFAULT_FETCH_TIMEOUT_MS,
@@ -62,6 +64,11 @@ import {
   legacyHashRedirectPath,
   DASHBOARD_PAGE_TITLES,
 } from "../constants/appRoutes.js";
+import {
+  isSectionNavigationLocked,
+  lockSectionNavigation,
+  scrollToSectionElement,
+} from "../utils/sectionScroll.js";
 import { SECTION_THEME } from "../constants/dashboardTheme.js";
 import {
   canonicalViolationType as canonicalMonitoringViolationType,
@@ -290,51 +297,15 @@ function SupervisorAnalyticsBars({ loading, supervisorSummary }) {
   );
 }
 
-/** Same-origin API paths (Vite proxy /api) + remote URLs + blob + data URLs. */
-function isRenderableImageSrc(src) {
-  if (typeof src !== "string") return false;
-  const s = src.trim();
-  if (!s) return false;
-  return (
-    s.startsWith("http://") ||
-    s.startsWith("https://") ||
-    s.startsWith("blob:") ||
-    s.startsWith("data:") ||
-    s.startsWith("/api/")
-  );
-}
-
-/** Square food thumbnail: real image or placeholder. */
-function FoodImageThumb({ src, alt = "", sizeClass = "h-24 w-24" }) {
-  const [failed, setFailed] = useState(false);
-  const show = isRenderableImageSrc(src) && !failed;
-  return (
-    <div
-      className={`${sizeClass} shrink-0 overflow-hidden rounded-xl bg-[#0B1327] shadow-[0_8px_24px_-4px_rgba(0,0,0,0.55)] ring-1 ring-white/10 transition hover:ring-brand-sky/25`}
-    >
-      {show ? (
-        <img
-          alt={alt}
-          src={src}
-          className="h-full w-full object-cover"
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-slate-500">
-          <IconDish className="h-9 w-9 opacity-45" />
-          <span className="px-1 text-center text-[10px] leading-tight text-slate-600">بدون صورة</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
+// Performance: removed backdrop-blur-sm + shadow-glass + hover transitions from
+// the shared card classes. These were applied to ~200 cards, so even at 60fps the
+// browser was thrashing the compositor on every scroll. Solid backgrounds restore
+// stable scrolling on long pages.
 const glassCard =
-  "rounded-2xl border border-white/10 bg-[rgba(15,23,42,0.82)] p-4 shadow-glass backdrop-blur-sm transition duration-200 hover:border-white/15 sm:p-6";
+  "rounded-2xl border border-white/10 bg-[#0f172a] p-4 sm:p-6";
 
-/** Staff sections — minimal blur for scroll performance */
 const staffGlassCard =
-  "rounded-2xl border border-white/10 bg-[rgba(15,23,42,0.85)] p-4 shadow-glass backdrop-blur-sm transition duration-200 hover:border-white/15 sm:p-6";
+  "rounded-2xl border border-white/10 bg-[#0f172a] p-4 sm:p-6";
 
 /** Staff dish workflow — clearer depth + glow (scoped to staff sections only). */
 const staffElevatedCard =
@@ -428,7 +399,10 @@ function protectedApiErrorText(status, detail) {
 }
 
 const SUPERVISOR_ALERTS_URL = apiUrl("/api/v1/supervisor/alerts");
+const SUPERVISOR_ALERT_STATUS_URL = (id) => apiUrl(`/api/v1/supervisor/alerts/${id}/status`);
+const AI_STATUS_URL = apiUrl("/api/v1/ai/status");
 const MONITORING_ANALYZE_URL = apiUrl("/api/v1/monitoring/analyze-frame");
+const AI_VIOLATIONS_DETECT_URL = apiUrl("/api/v1/violations/detect");
 const DISH_REVIEW_UPDATED_EVENT = "ska:dish-review-updated";
 const SUPERVISOR_SUMMARY_URL = apiUrl("/api/v1/supervisor/summary");
 const SUPERVISOR_EMPLOYEES_URL = apiUrl("/api/v1/supervisor/employees");
@@ -825,6 +799,7 @@ function toStaffRecord(item, meta = {}) {
     label: effectiveLabel,
     predictedLabel: String(item.predicted_label || ""),
     imageUrl: String(item.image_url || item.image_data_url || ""),
+    imageAvailable: item.image_available !== false,
     quantity: typeof item.quantity === "number" ? item.quantity : Number(item.quantity) || 1,
     sourceEntity: String(item.source_entity || ""),
     recordedAt: item.recorded_at,
@@ -844,152 +819,436 @@ function toStaffRecord(item, meta = {}) {
   };
 }
 
-function MonitoringResultPanel({ result, liveActive, liveTickBusy, manualLoading, zoneName, lastAnalyzedAt }) {
-  const SEV_CARD = { high: "border-red-500/35 bg-red-500/10", medium: "border-amber-500/35 bg-amber-500/10", low: "border-sky-500/25 bg-sky-500/10" };
-  const SEV_BADGE = { high: "border-red-500/40 bg-red-500/20 text-red-200", medium: "border-amber-500/40 bg-amber-500/20 text-amber-200", low: "border-sky-500/30 bg-sky-500/15 text-sky-200" };
-  const SEV_LABEL = { high: "عالي", medium: "متوسط", low: "منخفض" };
-  const CAT_LABEL = { PPE: "معدات الوقاية", hygiene: "النظافة", waste: "النفايات", cleanliness: "النظافة العامة", staff_behavior: "سلوك العمال", food_safety: "سلامة الغذاء" };
+// Safety check definitions — PPE + environment hazards displayed as status cards.
+// `source` controls which signal feeds the card:
+//   - mask_model     → dedicated mask model entry under supplementary_checks
+//   - supplementary  → dedicated PPE region pipeline (gloves, headcover, uniform)
+//   - scene          → environment heuristic (wet floor, trash on floor)
+const _CHECK_DEFS = [
+  { key: "no_mask",        label: "الكمامة",       emoji: "😷", source: "mask_model"    },
+  { key: "no_gloves",      label: "القفازات",      emoji: "🧤", source: "supplementary" },
+  { key: "no_headcover",   label: "غطاء الرأس",    emoji: "🪖", source: "supplementary" },
+  { key: "no_uniform",     label: "الزي الرسمي",   emoji: "👔", source: "supplementary" },
+  { key: "trash_on_floor", label: "النفايات",      emoji: "🗑️", source: "scene"         },
+  { key: "wet_floor",      label: "أرضية مبللة",   emoji: "💧", source: "scene"         },
+];
 
+const _CHECK_STATE_CFG = {
+  violation: {
+    card:   "border-red-500/50 bg-red-500/[0.10] shadow-[0_0_18px_-8px_rgba(239,68,68,0.30)]",
+    badge:  "border-red-500/40 bg-red-500/20 text-red-200",
+    dot:    "bg-red-400",
+    symbol: "✕",
+    label:  "مخالفة",
+    color:  "text-red-300",
+    pulse:  false,
+  },
+  compliant: {
+    card:   "border-emerald-500/40 bg-emerald-500/[0.07] shadow-[0_0_16px_-10px_rgba(16,185,129,0.25)]",
+    badge:  "border-emerald-500/30 bg-emerald-500/12 text-emerald-200",
+    dot:    "bg-emerald-400",
+    symbol: "✓",
+    label:  "مطابق",
+    color:  "text-emerald-300",
+    pulse:  false,
+  },
+  verifying: {
+    card:   "border-amber-400/45 bg-amber-400/[0.07]",
+    badge:  "border-amber-400/35 bg-amber-400/12 text-amber-200",
+    dot:    "bg-amber-400",
+    symbol: "◷",
+    label:  "جاري التحقق",
+    color:  "text-amber-300",
+    pulse:  true,
+  },
+  needs_review: {
+    card:   "border-amber-500/35 bg-amber-500/[0.06]",
+    badge:  "border-amber-500/30 bg-amber-500/10 text-amber-300",
+    dot:    "bg-amber-500",
+    symbol: "◌",
+    label:  "يحتاج مراجعة",
+    color:  "text-amber-400",
+    pulse:  false,
+  },
+  unavailable: {
+    card:   "border-white/[0.08] bg-white/[0.02]",
+    badge:  "border-slate-600/20 bg-slate-600/10 text-slate-500",
+    dot:    "bg-slate-600",
+    symbol: "—",
+    label:  "غير مفعّل",
+    color:  "text-slate-500",
+    pulse:  false,
+  },
+  no_person: {
+    card:   "border-slate-700/30 bg-slate-700/[0.04]",
+    badge:  "border-slate-600/20 bg-slate-600/10 text-slate-500",
+    dot:    "bg-slate-600",
+    symbol: "👤",
+    label:  "لا يوجد أفراد",
+    color:  "text-slate-500",
+    pulse:  false,
+  },
+};
+
+function _deriveCheckState(key, source, result) {
+  if (!result) return { state: "unavailable", confidence: null, violatingCount: 0 };
+
+  const violations    = (result.violations || []).filter((v) => !v.alias_of);
+  const dbg           = result.frame_report?.debug || {};
+  const supp          = (dbg.supplementary_checks || {})[key];
+  const overallStatus = result.overall_status || "clean";
+  const peopleCount   = typeof result.people_count === "number" ? result.people_count : (dbg.people_count ?? 0);
+  const ppeRawCount   = dbg.ppe_raw_count ?? null;
+
+  // How many distinct persons are flagged for this check type
+  const typeViolations = violations.filter((v) => v.type === key);
+  const uniquePersons  = [...new Set(typeViolations.map((v) => v.person_index).filter((p) => p != null))];
+  const violatingCount = typeViolations.length > 0 ? (uniquePersons.length || typeViolations.length) : 0;
+
+  if (peopleCount === 0 && overallStatus !== "cannot_verify") {
+    return { state: "no_person", confidence: null, violatingCount: 0 };
+  }
+
+  // Region-aware pipeline result (mask, headcover, gloves — crop-based inference)
+  if (source === "supplementary" || source === "mask_model") {
+    if (supp) {
+      // supp.violating_count comes from the region pipeline (per-person aggregation).
+      const suppViolCount = supp.violating_count ?? violatingCount;
+      if (supp.status === "not_configured") return { state: "unavailable",   confidence: null,              violatingCount: 0             };
+      if (supp.status === "violation")      return { state: "violation",      confidence: supp.confidence,   violatingCount: suppViolCount || 1 };
+      // ok: region pipeline positively confirmed PPE for 3 consecutive frames → green
+      if (supp.status === "ok")             return { state: "compliant",      confidence: supp.confidence || null, violatingCount: 0       };
+      // verifying: streak building — pulsing amber "جاري التحقق", not green yet
+      if (supp.status === "verifying")      return { state: "verifying",      confidence: supp.confidence || null, violatingCount: 0       };
+      // needs_review: model silent, region not visible, or below threshold
+      if (supp.status === "needs_review")   return { state: "needs_review",   confidence: supp.confidence || null, violatingCount: 0       };
+      if (supp.status === "not_verified")   return { state: "needs_review",   confidence: supp.confidence || null, violatingCount: 0       };
+      // ok_inferred (legacy): kept for backward compat but now maps to needs_review
+      // per policy: model silence ≠ compliant.
+      if (supp.status === "ok_inferred")    return { state: "needs_review",   confidence: null,              violatingCount: 0             };
+      if (supp.status === "error")          return { state: "needs_review",   confidence: null,              violatingCount: 0             };
+    }
+    // Mask without supplementary entry: defer to main YOLO. If no violation → compliant.
+    if (key === "no_mask") {
+      const maskViol = violations.find((v) => v.type === "no_mask");
+      if (maskViol)                          return { state: "violation",    confidence: maskViol.confidence, violatingCount: violatingCount || 1 };
+      if (overallStatus === "clean")         return { state: "compliant",    confidence: null,                violatingCount: 0 };
+      return { state: "needs_review", confidence: null, violatingCount: 0 };
+    }
+    // Gloves / headcover without supplementary entry
+    const mainViol = violations.find((v) => v.type === key);
+    if (mainViol)                      return { state: "violation",    confidence: mainViol.confidence, violatingCount: violatingCount || 1 };
+    if (overallStatus === "clean")     return { state: "compliant",    confidence: null, violatingCount: 0 };
+    if (overallStatus === "cannot_verify") return { state: "needs_review", confidence: null, violatingCount: 0 };
+    return { state: "unavailable", confidence: null, violatingCount: 0 };
+  }
+
+  // Scene checks (wet floor, trash on floor) — heuristic data under supplementary_checks
+  if (source === "scene") {
+    // Backend emits a confirmed violation (main YOLO class fired) → red card.
+    const mainViol = violations.find((v) => v.type === key);
+    if (mainViol) return { state: "violation", confidence: mainViol.confidence, violatingCount: violatingCount || 1 };
+    if (supp) {
+      if (supp.status === "violation")     return { state: "violation",    confidence: supp.confidence,        violatingCount: 1 };
+      if (supp.status === "needs_review")  return { state: "needs_review", confidence: supp.confidence || null, violatingCount: 0 };
+      if (supp.status === "ok")            return { state: "compliant",    confidence: null,                    violatingCount: 0 };
+      if (supp.status === "not_configured") return { state: "unavailable", confidence: null,                   violatingCount: 0 };
+    }
+    return { state: "needs_review", confidence: null, violatingCount: 0 };
+  }
+
+  // Main YOLO model checks (fallback for keys not covered above)
+  const mainViol = violations.find((v) => v.type === key);
+  if (mainViol)                      return { state: "violation",    confidence: mainViol.confidence, violatingCount: violatingCount || 1 };
+  if (overallStatus === "clean")     return { state: "compliant",    confidence: null, violatingCount: 0 };
+  if (overallStatus === "cannot_verify") return { state: "needs_review", confidence: null, violatingCount: 0 };
+  return { state: "unavailable", confidence: null, violatingCount: 0 };
+}
+
+function PpeStatusDashboard({ result, liveActive, liveTickBusy, manualLoading, zoneName, lastAnalyzedAt, role }) {
+  const [techOpen, setTechOpen] = useState(false);
   const isLoading = liveTickBusy || manualLoading;
+  // Technical / diagnostic panel is admin-only — supervisors get a clean, simple view.
+  const showTechPanel = role === "admin";
 
-  // No result yet — show waiting panel
   if (!result) {
     return (
-      <div className="mt-4 rounded-xl border border-violet-500/20 bg-[#0d0d2b]/60 p-4">
-        <p className="mb-1 text-xs font-semibold text-slate-300">آخر نتيجة تحليل</p>
-        <div className="flex items-center gap-2 text-[11px] text-violet-300">
-          {isLoading ? (
-            <>
-              <span className="inline-block h-3 w-3 animate-spin rounded-full border border-violet-400/30 border-t-violet-300" />
-              <span>جاري إرسال الإطار للتحليل...</span>
-            </>
-          ) : liveActive ? (
-            <>
-              <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-violet-400" />
-              <span>في انتظار أول نتيجة — YOLO يُحمِّل النموذج (قد يستغرق 1–3 دقائق)</span>
-            </>
-          ) : (
-            <span className="text-slate-500">لا توجد نتيجة بعد — اضغط «تحليل» أو فعّل التحليل المباشر.</span>
-          )}
+      <div className="mt-4 rounded-xl border border-white/10 bg-[#080f24]/60 p-5">
+        <div className="flex items-center gap-3">
+          <span
+            className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+              liveActive ? "animate-pulse bg-emerald-400" : "bg-slate-700"
+            }`}
+          />
+          <p className="text-sm text-slate-400">
+            {isLoading
+              ? "جاري تحليل البيئة..."
+              : liveActive
+              ? "جاري تحميل نظام المراقبة..."
+              : "المراقبة غير نشطة — شغّل الكاميرا لعرض حالة السلامة."}
+          </p>
         </div>
+        {liveActive && !isLoading && (
+          <p className="mt-2 pr-5 text-[11px] text-slate-600">
+            قد يستغرق التحميل الأول دقيقة أو دقيقتين عند أول تشغيل.
+          </p>
+        )}
       </div>
     );
   }
 
-  const res = result;
-  const qualityPct = typeof res.quality_pct === "number" ? res.quality_pct : 100;
-  const overallStatus = res.overall_status || "clean";
-  const realViolations = Array.isArray(res.violations) ? res.violations.filter((v) => !v.alias_of) : [];
-  const hasNoPerson = realViolations.some((v) => v.type === "no_person_in_zone");
-  const hasCameraWarning = realViolations.some((v) => v.type === "unclear_camera_angle");
-  const displayViolations = realViolations.filter((v) => v.type !== "no_person_in_zone" && v.type !== "unclear_camera_angle");
-  const ppeNotice = res.frame_report?.ppe_notice_ar;
+  const violations     = (result.violations || []).filter((v) => !v.alias_of);
+  const displayViolations = violations.filter(
+    (v) => v.type !== "no_person_in_zone" && v.type !== "unclear_camera_angle",
+  );
+  const hasNoPerson    = violations.some((v) => v.type === "no_person_in_zone");
+  const overallStatus  = result.overall_status || "clean";
+  const cannotVerify   = overallStatus === "cannot_verify";
+  const qualityPct     = typeof result.quality_pct === "number" ? result.quality_pct : 100;
+  const dbg            = result.frame_report?.debug || {};
+  const peopleCount    = typeof result.people_count === "number" ? result.people_count : (dbg.people_count ?? 0);
+  const analyzedAt     = result.frame_report?.analyzed_at || lastAnalyzedAt;
+  const isFullyCompliant = overallStatus === "clean" && displayViolations.length === 0;
 
-  const qualityColor = qualityPct >= 95 ? "text-emerald-400" : qualityPct >= 70 ? "text-amber-400" : "text-red-400";
-  const statusBg = overallStatus === "clean"
-    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-    : overallStatus === "warning"
-    ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
-    : "border-red-500/30 bg-red-500/10 text-red-200";
-  const statusLabel = overallStatus === "clean" ? "مطابق للمعايير"
-    : overallStatus === "warning" ? "تحذير — مخالفات بسيطة"
-    : "خطر — مخالفات حرجة";
+  const overallDotCls = cannotVerify
+    ? "bg-amber-400"
+    : isFullyCompliant && peopleCount > 0
+    ? "bg-emerald-400"
+    : displayViolations.length > 0
+    ? "bg-red-400"
+    : "bg-slate-600";
+
+  const complianceCls = cannotVerify
+    ? "text-amber-400"
+    : qualityPct >= 95
+    ? "text-emerald-400"
+    : qualityPct >= 70
+    ? "text-amber-400"
+    : "text-red-400";
+
+  const lastCheckedLabel = analyzedAt ? formatSaudiDateTime(analyzedAt) : "—";
+
+  const checkStates = _CHECK_DEFS.map(({ key, source }) => ({
+    key,
+    ..._deriveCheckState(key, source, result),
+  }));
+
+  const violatingPeopleCount = Math.max(
+    ...checkStates.filter((c) => c.state === "violation").map((c) => c.violatingCount || 0),
+    0,
+  );
 
   return (
     <div className="mt-4 space-y-3">
-      {/* Header */}
-      <div className="flex items-start justify-between rounded-xl border border-white/10 bg-[#060d1f]/80 px-4 py-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs font-semibold text-slate-400">آخر نتيجة تحليل</p>
-            {isLoading && (
-              <span className="flex items-center gap-1 text-[10px] text-violet-300">
-                <span className="inline-block h-2 w-2 animate-spin rounded-full border border-violet-400/30 border-t-violet-300" />
-                جاري تحليل إطار جديد...
-              </span>
-            )}
+      {/* Professional summary strip */}
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-white/10 bg-white/[0.04] sm:grid-cols-4">
+        {[
+          {
+            icon: "👤",
+            value: peopleCount,
+            valueCls: peopleCount > 0 ? "text-sky-300" : "text-slate-500",
+            sub: "أشخاص مرصودون",
+          },
+          {
+            icon: "⚠",
+            value: displayViolations.length,
+            valueCls: displayViolations.length > 0 ? "text-red-400" : "text-emerald-400",
+            sub: displayViolations.length > 0
+              ? `${violatingPeopleCount > 0 ? violatingPeopleCount + " شخص" : ""} مخالف`
+              : "لا مخالفات",
+          },
+          {
+            icon: "🕐",
+            value: lastCheckedLabel,
+            valueCls: "text-slate-300 text-[10px]",
+            sub: "آخر تحليل",
+          },
+          {
+            icon: cannotVerify ? "🔍" : qualityPct >= 95 ? "✅" : qualityPct >= 70 ? "⚠" : "❌",
+            value: cannotVerify ? "—" : `${qualityPct}%`,
+            valueCls: complianceCls,
+            sub: "درجة الامتثال",
+          },
+        ].map(({ icon, value, valueCls, sub }, i) => (
+          <div key={i} className="flex flex-col items-center gap-0.5 bg-[#060d1f]/80 px-3 py-3">
+            <span className="text-base leading-none">{icon}</span>
+            <p className={`text-sm font-bold tabular-nums leading-none ${valueCls}`}>{value}</p>
+            <p className="mt-0.5 text-center text-[10px] text-slate-500">{sub}</p>
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${statusBg}`}>
-              {statusLabel}
-            </span>
-            <span className="text-[10px] text-slate-500">
-              {res.violation_count ?? displayViolations.length} مخالفة
-            </span>
-          </div>
-          <p className="mt-1 text-[10px] text-slate-600">
-            {zoneName}
-            {typeof res.people_count === "number" && res.people_count > 0 ? ` · ${res.people_count} شخص` : ""}
-          </p>
-        </div>
-        <div className="shrink-0 text-right">
-          <p className={`text-3xl font-bold leading-none ${qualityColor}`}>{qualityPct}%</p>
-          <p className="mt-1 text-[10px] text-slate-500">مؤشر الجودة</p>
-        </div>
+        ))}
       </div>
 
-      {/* Camera / person warnings */}
-      {(hasNoPerson || hasCameraWarning || ppeNotice) && (
-        <div className="space-y-1 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-[11px] text-amber-300">
-          {hasNoPerson && <p>⚠ لم يُرصد أشخاص في منطقة المطبخ — يرجى توجيه الكاميرا نحو منطقة العمل.</p>}
-          {hasCameraWarning && <p>⚠ زاوية الكاميرا غير واضحة — أعد توجيهها نحو منطقة العمل.</p>}
-          {ppeNotice && !hasNoPerson && <p>⚠ {ppeNotice}</p>}
+      {/* Compliance score bar */}
+      {!cannotVerify && (
+        <div className="overflow-hidden rounded-lg border border-white/[0.07] bg-[#060d1f]/80">
+          <div className="flex items-center justify-between px-3 py-1.5">
+            <span className="text-[10px] text-slate-500">
+              {isLoading
+                ? "جاري التحليل..."
+                : isFullyCompliant && peopleCount > 0
+                ? "جميع الموظفين ملتزمون ✓"
+                : isFullyCompliant
+                ? "لا يوجد أفراد في المجال"
+                : `${displayViolations.length} مخالفة نشطة`}
+            </span>
+            {zoneName && <span className="text-[10px] text-slate-600">{zoneName}</span>}
+            <span className={`text-[11px] font-bold tabular-nums ${complianceCls}`}>
+              {cannotVerify ? "—" : `${qualityPct}%`}
+            </span>
+          </div>
+          <div className="h-1 w-full bg-white/[0.05]">
+            <div
+              className={`h-full transition-all duration-700 ${
+                qualityPct >= 95 ? "bg-emerald-500" : qualityPct >= 70 ? "bg-amber-500" : "bg-red-500"
+              }`}
+              style={{ width: `${cannotVerify ? 50 : qualityPct}%` }}
+            />
+          </div>
         </div>
       )}
 
-      {/* Violations */}
-      {displayViolations.length > 0 ? (
-        <div className="space-y-2">
-          {displayViolations.map((v, idx) => (
-            <article key={`vc-${idx}`} className={`rounded-xl border p-3 text-start ${SEV_CARD[v.severity] || SEV_CARD.medium}`}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-white">{v.label_ar}</p>
-                  <p className="mt-1 text-[11px] leading-snug text-slate-300">{v.reason_ar}</p>
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-1.5">
-                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${SEV_BADGE[v.severity] || SEV_BADGE.medium}`}>
-                    {SEV_LABEL[v.severity] || "متوسط"}
-                  </span>
-                  <span className="text-[10px] text-slate-400">ثقة: {v.confidence}%</span>
-                </div>
+      {/* PPE check cards — 3 cols on sm+, 2 cols on mobile */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {_CHECK_DEFS.map(({ key, label, emoji }) => {
+          const { state, confidence, violatingCount } =
+            checkStates.find((c) => c.key === key) || { state: "unavailable", confidence: null, violatingCount: 0 };
+          const cfg = _CHECK_STATE_CFG[state] || _CHECK_STATE_CFG.unavailable;
+          return (
+            <div
+              key={key}
+              className={`relative overflow-hidden rounded-xl border p-3.5 transition-all duration-300 ${cfg.card}`}
+            >
+              {/* Pulsing overlay for verifying state */}
+              {cfg.pulse && (
+                <span className="pointer-events-none absolute inset-0 animate-pulse rounded-xl bg-amber-400/[0.06]" />
+              )}
+              <div className="relative flex items-start justify-between">
+                <span className="text-2xl leading-none">{emoji}</span>
+                <span className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${cfg.badge} ${cfg.pulse ? "animate-pulse" : ""}`}>
+                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+                  {cfg.label}
+                </span>
               </div>
-              {v.suggested_action ? (
-                <p className="mt-2 text-[10px] text-slate-400">
-                  <span className="font-medium text-slate-300">الإجراء المقترح: </span>
-                  {v.suggested_action}
+              <p className="relative mt-2.5 text-[12px] font-semibold text-slate-200">{label}</p>
+              {violatingCount > 0 && (
+                <p className="relative mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-300">
+                  <span>👤</span>
+                  <span>{violatingCount} {violatingCount === 1 ? "شخص مخالف" : "أشخاص مخالفون"}</span>
                 </p>
-              ) : null}
-              <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
-                {v.category ? <span>{CAT_LABEL[v.category] || v.category}</span> : null}
-                {v.person_index != null ? <span>العامل رقم: {v.person_index}</span> : null}
+              )}
+              {state === "verifying" && (
+                <p className="relative mt-1 text-[10px] text-amber-400/80">
+                  جاري التحقق من {label}…
+                </p>
+              )}
+              {state !== "unavailable" && state !== "no_person" && analyzedAt && (
+                <p className="relative mt-1.5 text-[9px] leading-tight text-slate-600">
+                  آخر فحص: {lastCheckedLabel}
+                </p>
+              )}
+              {showTechPanel && techOpen && confidence != null && confidence > 0 && (
+                <p className="relative mt-0.5 text-[9px] text-slate-600">ثقة: {confidence}%</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Cannot-verify warning */}
+      {cannotVerify && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2.5 text-[11px]">
+          <p className="font-semibold text-amber-200">⚠ يتعذّر التحقق الكامل من معدات الحماية</p>
+          <p className="mt-0.5 leading-relaxed text-amber-400/80">
+            {result.summary ||
+              "النظام رصد نشاطاً في المنطقة لكن لا يمكن تأكيد الامتثال الكامل. تأكد من توجيه الكاميرا نحو العمال بشكل مباشر."}
+          </p>
+        </div>
+      )}
+
+      {/* No-person notice */}
+      {!cannotVerify && hasNoPerson && (
+        <div className="rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2.5 text-[11px] text-slate-400">
+          لم يُرصد أفراد في مجال الكاميرا — وجّه الكاميرا نحو منطقة العمل للتحقق من الالتزام.
+        </div>
+      )}
+
+      {/* Active violations list */}
+      {displayViolations.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="px-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            المخالفات النشطة
+          </p>
+          {displayViolations.map((v, idx) => (
+            <div
+              key={`vio-${idx}`}
+              className="flex items-start gap-2.5 rounded-lg border border-red-500/20 bg-red-500/[0.05] px-3 py-2.5"
+            >
+              <span className="mt-px shrink-0 text-[11px] font-bold text-red-400">✕</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-slate-100">{v.label_ar}</p>
+                {v.reason_ar && (
+                  <p className="mt-0.5 text-[10px] leading-snug text-slate-500">{v.reason_ar}</p>
+                )}
+                {v.suggested_action && (
+                  <p className="mt-1 text-[10px] text-slate-600">الإجراء: {v.suggested_action}</p>
+                )}
               </div>
-            </article>
+            </div>
           ))}
         </div>
-      ) : !hasNoPerson && !hasCameraWarning ? (
-        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-center">
-          <p className="text-sm font-semibold text-emerald-300">🟢 لا توجد مخالفات</p>
-          <p className="mt-1 text-[10px] text-emerald-600">
-            {res.frame_report?.summary_ar || "لم يُرصد أي مخالفة — المطبخ مطابق لمعايير السلامة الغذائية."}
-          </p>
-        </div>
-      ) : null}
-
-      {/* Low confidence fallback */}
-      {res.overall_confidence != null && res.overall_confidence < 40 && displayViolations.length === 0 && !hasNoPerson && (
-        <p className="text-[10px] text-slate-500">
-          لم يتم رصد مخالفة مؤكدة، يرجى توجيه الكاميرا لمنطقة العمل بوضوح.
-        </p>
       )}
 
-      {/* Footer */}
-      <div className="flex items-center justify-between text-[10px] text-slate-600">
-        <span>{res.provider === "yolo" ? "YOLO PPE" : res.provider === "gemini" ? "Gemini Vision" : (res.provider || "")}</span>
-        {(res.frame_report?.analyzed_at || lastAnalyzedAt) ? (
-          <span dir="ltr">{formatSaudiDateTime(res.frame_report?.analyzed_at || lastAnalyzedAt)}</span>
-        ) : null}
-      </div>
+      {/* Fully compliant confirmation */}
+      {isFullyCompliant && !cannotVerify && !hasNoPerson && peopleCount > 0 && (
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] px-4 py-3 text-center">
+          <p className="text-sm font-semibold text-emerald-300">
+            جميع الموظفين ملتزمون بمعايير السلامة
+          </p>
+          <p className="mt-0.5 text-[10px] text-emerald-800">
+            {result.frame_report?.summary_ar || "لم تُرصد أي مخالفات في هذا الإطار."}
+          </p>
+        </div>
+      )}
+
+      {/* Technical diagnostics — admin only. Supervisors see a clean view. */}
+      {showTechPanel && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setTechOpen((v) => !v)}
+            className="flex w-full items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-[10px] font-medium text-slate-500 transition-colors hover:border-white/10 hover:text-slate-400"
+          >
+            <span>معلومات تقنية (مشرف النظام)</span>
+            <span className="text-[8px]">{techOpen ? "▲" : "▼"}</span>
+          </button>
+          {techOpen && (
+            <div className="mt-1.5 space-y-0.5 rounded-lg border border-white/[0.06] bg-[#040b1e]/80 p-3 font-mono text-[10px] text-slate-500">
+              <p>المزود: {result.frame_report?.provider || result.provider || "—"}</p>
+              <p>الثقة الإجمالية: {result.overall_confidence ?? "—"}%</p>
+              <p>النموذج: {dbg.model_used || "—"}</p>
+              <p>الأشخاص (YOLO): {dbg.people_count ?? "—"}</p>
+              {checkStates.map(({ key, state, confidence }) =>
+                confidence != null ? (
+                  <p key={key}>{key}: {state} ({confidence}%)</p>
+                ) : null,
+              )}
+              {dbg.supplementary_checks && Object.keys(dbg.supplementary_checks).length > 0 && (
+                <div className="mt-1 space-y-0.5 border-t border-white/[0.06] pt-1">
+                  <p className="text-slate-600">نماذج تكميلية:</p>
+                  {Object.entries(dbg.supplementary_checks).map(([k, sv]) => (
+                    <p key={k} className="pr-2">
+                      {k}: {sv.status || "—"}{sv.confidence ? ` (${sv.confidence}%)` : ""}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {dbg.missing_models?.length > 0 && (
+                <p className="mt-1 text-amber-700">نماذج مفقودة: {dbg.missing_models.join("، ")}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1008,8 +1267,12 @@ export default function Dashboard() {
   const staffSpyRafRef = useRef(null);
   const supervisorSpyNavigateTimerRef = useRef(null);
   const supervisorSpyRafRef = useRef(null);
-  /** When true, next pathname sync must not call scrollIntoView (coming from scroll-spy navigate). */
+  /** When true, next pathname sync must not scroll (coming from scroll-spy navigate). */
   const suppressScrollIntoViewFromSpyRef = useRef(false);
+  /** Timestamp (ms) until which scroll-spy must not change the URL. */
+  const sectionNavLockUntilRef = useRef(0);
+  /** Last section id synced to URL — avoids redundant navigate() during scroll. */
+  const lastSpySectionIdRef = useRef(null);
   const supervisorAnalyticsRef = useRef(null);
   const supervisorCamerasRef = useRef(null);
   /** Scroll target: supervisor «مراقبة بالذكاء الاصطناعي» block (video/image upload). */
@@ -1087,20 +1350,19 @@ export default function Dashboard() {
   const [alertsError, setAlertsError] = useState("");
   /** null = unknown, true/false from lightweight GET /health or /. */
   const [apiReachable, setApiReachable] = useState(null);
-  const [cameraTestFile, setCameraTestFile] = useState(null);
-  const [cameraTestPreviewUrl, setCameraTestPreviewUrl] = useState("");
-  const [cameraAnalyzeMode, setCameraAnalyzeMode] = useState("image");
-  const [cameraVideoFile, setCameraVideoFile] = useState(null);
-  const [cameraVideoPreviewUrl, setCameraVideoPreviewUrl] = useState("");
-  const [cameraVideoDurationSec, setCameraVideoDurationSec] = useState(null);
-  const [cameraVideoError, setCameraVideoError] = useState("");
-  const [monitoringVideoAnalyzeLoading, setMonitoringVideoAnalyzeLoading] = useState(false);
-  const [monitoringVideoProgressText, setMonitoringVideoProgressText] = useState("");
-  const [monitoringVideoResults, setMonitoringVideoResults] = useState([]);
-  const [monitoringVideoFrameResults, setMonitoringVideoFrameResults] = useState([]);
-  const [monitoringVideoAlertsCreated, setMonitoringVideoAlertsCreated] = useState(0);
-  const [monitoringFrameFilter, setMonitoringFrameFilter] = useState("all");
-  const [newCameraForm, setNewCameraForm] = useState({ name: "", location: "", stream_url: "" });
+  const [alertStatusFilter, setAlertStatusFilter] = useState("all");
+  const [alertTypeFilter, setAlertTypeFilter] = useState("all");
+  const [evidenceAlertId, setEvidenceAlertId] = useState(null);
+  const [aiStatus, setAiStatus] = useState(null);
+  const [aiStatusLoading, setAiStatusLoading] = useState(false);
+  const [alertUnderReviewLoadingId, setAlertUnderReviewLoadingId] = useState(null);
+  const [newCameraForm, setNewCameraForm] = useState({
+    name: "",
+    location: "",
+    stream_url: "",
+    username: "",
+    password: "",
+  });
   const [monitoringAnalysisResult, setMonitoringAnalysisResult] = useState(null);
   const [monitoringAnalyzeLoading, setMonitoringAnalyzeLoading] = useState(false);
   const [monitoringLastAnalyzedAt, setMonitoringLastAnalyzedAt] = useState(null);
@@ -1134,6 +1396,8 @@ export default function Dashboard() {
     loadRestaurantCameraConfigs(MONITORING_ZONE_DEFINITIONS),
   );
   const [cameraSetupBusy, setCameraSetupBusy] = useState({ test: null, save: null });
+  const [cameraDetectBusy, setCameraDetectBusy] = useState({});
+  const [detectResultModal, setDetectResultModal] = useState(null);
   const [adminSettings, setAdminSettings] = useState(ADMIN_SETTINGS_DEFAULTS);
   const [adminSettingsSaving, setAdminSettingsSaving] = useState(false);
   const [violationsReportFrom, setViolationsReportFrom] = useState("");
@@ -1189,36 +1453,6 @@ export default function Dashboard() {
       URL.revokeObjectURL(url);
     };
   }, [selectedImage]);
-
-  useEffect(() => {
-    if (!cameraTestFile) {
-      setCameraTestPreviewUrl("");
-      return undefined;
-    }
-    const url = URL.createObjectURL(cameraTestFile);
-    setCameraTestPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [cameraTestFile]);
-
-  useEffect(() => {
-    if (!cameraVideoFile) {
-      setCameraVideoPreviewUrl("");
-      setCameraVideoDurationSec(null);
-      return undefined;
-    }
-    const url = URL.createObjectURL(cameraVideoFile);
-    setCameraVideoPreviewUrl(url);
-    setCameraVideoDurationSec(null);
-    return () => URL.revokeObjectURL(url);
-  }, [cameraVideoFile]);
-
-  useEffect(() => {
-    return () => {
-      monitoringVideoFrameResults.forEach((item) => {
-        if (item?.frameUrl) URL.revokeObjectURL(item.frameUrl);
-      });
-    };
-  }, [monitoringVideoFrameResults]);
 
   useEffect(() => {
     if (!selectedImage && dishFileInputRef.current) {
@@ -1291,34 +1525,42 @@ export default function Dashboard() {
     return undefined;
   }, [role, navigate]);
 
-  /** Supervisor/admin: pathname drives active section + scroll into view (not when URL synced from scroll-spy). */
+  const lockSectionNavForScroll = useCallback(() => {
+    lockSectionNavigation(sectionNavLockUntilRef);
+  }, []);
+
+  /** Supervisor/admin: pathname → scroll to section (single shot, no fight with scroll-spy). */
   useEffect(() => {
     if (!(role === "supervisor" || role === "admin")) return undefined;
     const sec = getSupervisorSectionFromPathname(location.pathname);
     if (!sec) return undefined;
+    lastSpySectionIdRef.current = sec;
     if (suppressScrollIntoViewFromSpyRef.current) {
       suppressScrollIntoViewFromSpyRef.current = false;
       return undefined;
     }
-    const timer = window.setTimeout(() => {
-      document.getElementById(sec)?.scrollIntoView({ behavior: "auto", block: "nearest" });
-    }, 60);
-    return () => window.clearTimeout(timer);
+    lockSectionNavigation(sectionNavLockUntilRef);
+    const raf = requestAnimationFrame(() => {
+      scrollToSectionElement(sec);
+    });
+    return () => cancelAnimationFrame(raf);
   }, [location.pathname, role]);
 
-  /** Staff: pathname drives dish workflow section + scroll into view (not when URL synced from scroll-spy). */
+  /** Staff: pathname → scroll to section. */
   useEffect(() => {
     if (role !== "staff") return undefined;
     const sec = getStaffSectionFromPathname(location.pathname);
     if (!sec) return undefined;
+    lastSpySectionIdRef.current = sec;
     if (suppressScrollIntoViewFromSpyRef.current) {
       suppressScrollIntoViewFromSpyRef.current = false;
       return undefined;
     }
-    const timer = window.setTimeout(() => {
-      document.getElementById(sec)?.scrollIntoView({ behavior: "auto", block: "nearest" });
-    }, 60);
-    return () => window.clearTimeout(timer);
+    lockSectionNavigation(sectionNavLockUntilRef);
+    const raf = requestAnimationFrame(() => {
+      scrollToSectionElement(sec);
+    });
+    return () => cancelAnimationFrame(raf);
   }, [location.pathname, role]);
 
   /** Scroll spy: sync URL when the dominant section changes (replaceState → pathname). */
@@ -1333,9 +1575,11 @@ export default function Dashboard() {
 
     const observer = new IntersectionObserver(
       () => {
+        if (isSectionNavigationLocked(sectionNavLockUntilRef)) return;
         if (staffSpyRafRef.current != null) return;
         staffSpyRafRef.current = requestAnimationFrame(() => {
           staffSpyRafRef.current = null;
+          if (isSectionNavigationLocked(sectionNavLockUntilRef)) return;
           let bestId = null;
           let bestDist = Number.POSITIVE_INFINITY;
           for (const el of nodes) {
@@ -1346,21 +1590,23 @@ export default function Dashboard() {
               bestId = el.id;
             }
           }
-          if (!bestId) return;
+          if (!bestId || bestId === lastSpySectionIdRef.current) return;
           const nextPath = staffPathFromSectionId(bestId);
           if (typeof window !== "undefined" && window.location.pathname !== nextPath) {
             if (staffSpyNavigateTimerRef.current) window.clearTimeout(staffSpyNavigateTimerRef.current);
             staffSpyNavigateTimerRef.current = window.setTimeout(() => {
               staffSpyNavigateTimerRef.current = null;
+              if (isSectionNavigationLocked(sectionNavLockUntilRef)) return;
               if (typeof window !== "undefined" && window.location.pathname !== nextPath) {
+                lastSpySectionIdRef.current = bestId;
                 suppressScrollIntoViewFromSpyRef.current = true;
                 navigate(nextPath, { replace: true });
               }
-            }, 120);
+            }, 280);
           }
         });
       },
-      { root: null, rootMargin: "-20% 0px -60% 0px", threshold: [0, 0.1, 0.25, 0.5] },
+      { root: null, rootMargin: "-22% 0px -58% 0px", threshold: [0, 0.12] },
     );
     nodes.forEach((el) => observer.observe(el));
     return () => {
@@ -1399,9 +1645,11 @@ export default function Dashboard() {
       if (nodes.length === 0) return false;
       observer = new IntersectionObserver(
         () => {
+          if (isSectionNavigationLocked(sectionNavLockUntilRef)) return;
           if (supervisorSpyRafRef.current != null) return;
           supervisorSpyRafRef.current = requestAnimationFrame(() => {
             supervisorSpyRafRef.current = null;
+            if (isSectionNavigationLocked(sectionNavLockUntilRef)) return;
             const liveNodes = buildNodes();
             if (liveNodes.length === 0) return;
             let bestId = null;
@@ -1414,7 +1662,7 @@ export default function Dashboard() {
                 bestId = el.id;
               }
             }
-            if (!bestId) return;
+            if (!bestId || bestId === lastSpySectionIdRef.current) return;
             const cur = typeof window !== "undefined" ? window.location.pathname : "";
             if (
               bestId === SUPERVISOR_SECTION_IDS.employees &&
@@ -1436,15 +1684,17 @@ export default function Dashboard() {
               if (supervisorSpyNavigateTimerRef.current) window.clearTimeout(supervisorSpyNavigateTimerRef.current);
               supervisorSpyNavigateTimerRef.current = window.setTimeout(() => {
                 supervisorSpyNavigateTimerRef.current = null;
+                if (isSectionNavigationLocked(sectionNavLockUntilRef)) return;
                 if (typeof window !== "undefined" && window.location.pathname !== nextPath) {
+                  lastSpySectionIdRef.current = bestId;
                   suppressScrollIntoViewFromSpyRef.current = true;
                   navigate(nextPath, { replace: true });
                 }
-              }, 120);
+              }, 280);
             }
           });
         },
-        { root: null, rootMargin: "-20% 0px -60% 0px", threshold: [0, 0.1, 0.25, 0.5] },
+        { root: null, rootMargin: "-22% 0px -58% 0px", threshold: [0, 0.12] },
       );
       nodes.forEach((el) => observer.observe(el));
       return true;
@@ -1579,7 +1829,9 @@ export default function Dashboard() {
     ],
   );
 
+  /** AOS only on staff dish workflow — supervisor CCTV dashboard disables it (scroll jank). */
   useEffect(() => {
+    if (role !== "staff") return undefined;
     AOS.init({
       duration: 700,
       easing: "ease-out-cubic",
@@ -1605,7 +1857,7 @@ export default function Dashboard() {
       if (resizeDebounce != null) window.clearTimeout(resizeDebounce);
       window.removeEventListener("resize", onResize);
     };
-  }, []);
+  }, [role]);
 
   function resetAllFilters() {
     setFilterSearch("");
@@ -1945,16 +2197,29 @@ export default function Dashboard() {
     ];
     downloadUtf8Csv(
       taeenReportFilename("dish-review"),
-      ["رقم", "اسم الموظف", "اسم الطبق المقترح", "اسم الطبق المعتمد", "الكمية", "الحالة", "وقت التسجيل", "وقت المراجعة"],
+      [
+        "رقم",
+        "اسم الموظف",
+        "الطبق المقترح (AI)",
+        "الطبق المعتمد",
+        "الكمية",
+        "المصدر/الوجهة",
+        "الحالة",
+        "وقت التسجيل",
+        "وقت المراجعة",
+        "رابط الصورة",
+      ],
       reviewRecords.map((r, idx) => [
         idx + 1,
         r.employee_name || "—",
         r.predicted_label || "—",
         r.confirmed_label || "—",
         r.quantity ?? "",
+        r.source_entity || "—",
         dishReviewStatusArExport(r.status),
         r.recorded_at ? formatSaudiDateTime(r.recorded_at) : "—",
         r.reviewed_at ? formatSaudiDateTime(r.reviewed_at) : "—",
+        dishReportImageLink(r),
       ]),
       { preambleRows },
     );
@@ -2032,7 +2297,7 @@ export default function Dashboard() {
     }
     document.body.classList.add("ska-print-violations-only");
     const prevTitle = document.title;
-    document.title = `taeen-quality-monitoring-report-${formatReportDateYmd()}`;
+    document.title = `ska_violations_report_${formatReportDateYmd()}`;
     const onAfterPrint = () => {
       document.body.classList.remove("ska-print-violations-only");
       document.title = prevTitle;
@@ -2371,6 +2636,59 @@ export default function Dashboard() {
     }
   }, [getAccessToken, handleProtectedAuthFailure, role]);
 
+  const loadAiStatus = useCallback(async () => {
+    if (!(role === "supervisor" || role === "admin")) return;
+    const token = getAccessToken();
+    if (!token) return;
+    setAiStatusLoading(true);
+    try {
+      const res = await fetchWithTimeout(
+        AI_STATUS_URL,
+        { headers: { Authorization: `Bearer ${token}` } },
+        DEFAULT_FETCH_TIMEOUT_MS,
+      );
+      const body = await res.json().catch(() => null);
+      if (res.ok && body && Array.isArray(body.models)) {
+        setAiStatus(body);
+      }
+    } catch {
+      /* non-critical — silently ignore */
+    } finally {
+      setAiStatusLoading(false);
+    }
+  }, [getAccessToken, role]);
+
+  const markAlertUnderReview = useCallback(
+    async (alertId) => {
+      const token = getAccessToken();
+      if (!token) return;
+      setAlertUnderReviewLoadingId(alertId);
+      try {
+        const res = await fetchWithTimeout(
+          SUPERVISOR_ALERT_STATUS_URL(alertId),
+          {
+            method: "PATCH",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "under_review" }),
+          },
+          DEFAULT_FETCH_TIMEOUT_MS,
+        );
+        if (res.ok) {
+          await loadSupervisorAlerts();
+          setToast({ type: "success", text: "تم وضع التنبيه تحت المراجعة." });
+        } else {
+          const body = await res.json().catch(() => ({}));
+          setToast({ type: "error", text: body?.detail || "تعذر تحديث حالة التنبيه." });
+        }
+      } catch {
+        setToast({ type: "error", text: "خطأ في الاتصال." });
+      } finally {
+        setAlertUnderReviewLoadingId(null);
+      }
+    },
+    [getAccessToken, loadSupervisorAlerts, setToast],
+  );
+
   const fetchViolationsReport = useCallback(
     async (fromStr, toStr) => {
       if (!(role === "supervisor" || role === "admin")) return;
@@ -2434,6 +2752,11 @@ export default function Dashboard() {
     void loadSupervisorCameras();
     void loadSupervisorAlerts();
   }, [role, loadSupervisorCameras, loadSupervisorAlerts]);
+
+  useEffect(() => {
+    if (!(role === "supervisor" || role === "admin")) return;
+    void loadAiStatus();
+  }, [role, loadAiStatus]);
 
   useEffect(() => {
     if (!(role === "supervisor" || role === "admin")) {
@@ -2789,220 +3112,6 @@ export default function Dashboard() {
     }
   }
 
-  async function analyzeMonitoringFrameUpload() {
-    if (!(role === "supervisor" || role === "admin")) return;
-    const token = getAccessToken();
-    if (!token || !cameraTestFile) {
-      setToast({ type: "error", text: "يرجى اختيار صورة للتحليل." });
-      return;
-    }
-    setMonitoringAnalyzeLoading(true);
-    try {
-      const { ok, status, body } = await callAnalyzeFrameEndpoint(cameraTestFile, token, {
-        analysisMode: "manual",
-      });
-      if (handleProtectedAuthFailure(status, body?.detail)) return;
-      if (!isMonitoringAnalyzeSuccess(status, body)) {
-        const errDetail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : null;
-        if (status === 503) {
-          setToast({ type: "error", text: errDetail || "تعذر تحليل الصورة. تحقق من إعدادات الذكاء الاصطناعي أو فعّل وضع التجريبي." });
-        } else if (status === 400) {
-          setToast({ type: "error", text: errDetail || "الصورة غير صالحة." });
-        } else {
-          setToast({ type: "error", text: errDetail || "فشل تحليل الصورة. تحقق من إعدادات الذكاء الاصطناعي." });
-        }
-        return;
-      }
-      setMonitoringAnalysisResult(body);
-      setMonitoringLastAnalyzedAt(new Date().toISOString());
-      if (Number(body?.alerts_created) > 0) {
-        setToast({ type: "success", text: "تم تسجيل مخالفة" });
-      }
-      await loadSupervisorAlerts();
-      await loadSupervisorCameras();
-      await loadSupervisorSummary();
-    } catch (err) {
-      console.error("[Monitoring] image upload analyze failed:", MONITORING_ANALYZE_URL, err);
-      setToast({
-        type: "error",
-        text: formatMonitoringFetchError(err, "فشل تحليل الصورة. تحقق من إعدادات الذكاء الاصطناعي."),
-      });
-    } finally {
-      setMonitoringAnalyzeLoading(false);
-    }
-  }
-
-  function onSelectMonitoringVideoFile(file) {
-    if (!file) {
-      setCameraVideoFile(null);
-      setCameraVideoError("");
-      setMonitoringVideoResults([]);
-      setMonitoringVideoFrameResults([]);
-      setMonitoringVideoAlertsCreated(0);
-      return;
-    }
-    if (!String(file.type || "").startsWith("video/")) {
-      setCameraVideoFile(null);
-      setCameraVideoError("الملف المحدد ليس فيديو صالحاً. الرجاء اختيار ملف mp4 أو mov أو webm.");
-      return;
-    }
-    setCameraVideoError("");
-    setCameraVideoFile(file);
-    setMonitoringVideoResults([]);
-    setMonitoringVideoFrameResults([]);
-    setMonitoringVideoAlertsCreated(0);
-  }
-
-  function extractFrameBlobAt(videoEl, atSecond) {
-    return new Promise((resolve, reject) => {
-      const onSeeked = () => {
-        videoEl.removeEventListener("seeked", onSeeked);
-        const canvas = document.createElement("canvas");
-        canvas.width = videoEl.videoWidth || 1280;
-        canvas.height = videoEl.videoHeight || 720;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          reject(new Error("ctx_failed"));
-          return;
-        }
-        ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob((blob) => {
-          if (!blob) {
-            reject(new Error("blob_failed"));
-            return;
-          }
-          resolve(blob);
-        }, "image/jpeg", 0.9);
-      };
-      videoEl.addEventListener("seeked", onSeeked, { once: true });
-      videoEl.currentTime = Math.max(0, atSecond);
-    });
-  }
-
-  async function analyzeMonitoringVideoUpload() {
-    if (!(role === "supervisor" || role === "admin")) return;
-    const token = getAccessToken();
-    if (!token || !cameraVideoFile) {
-      setToast({ type: "error", text: "يرجى اختيار فيديو للتحليل." });
-      return;
-    }
-    setMonitoringVideoAnalyzeLoading(true);
-    setMonitoringVideoProgressText("جاري تجهيز الفيديو...");
-    setMonitoringVideoResults([]);
-    setMonitoringVideoFrameResults([]);
-    setMonitoringVideoAlertsCreated(0);
-    try {
-      const url = URL.createObjectURL(cameraVideoFile);
-      const video = document.createElement("video");
-      video.preload = "metadata";
-      video.muted = true;
-      video.src = url;
-      await new Promise((resolve, reject) => {
-        video.onloadedmetadata = () => resolve();
-        video.onerror = () => reject(new Error("video_metadata_failed"));
-      });
-      const duration = Number(video.duration);
-      const times = makeVideoFrameTimes(duration, 24);
-      if (!times.length) {
-        setToast({ type: "error", text: "تعذر قراءة مدة الفيديو للتحليل." });
-        URL.revokeObjectURL(url);
-        return;
-      }
-      const frameRows = [];
-      let alertsCreated = 0;
-      let apiErrorShown = false;
-      for (let i = 0; i < times.length; i += 1) {
-        const t = times[i];
-        setMonitoringVideoProgressText(`جاري تحليل الفيديو... (${i + 1}/${times.length})`);
-        const frameBlob = await extractFrameBlobAt(video, t);
-        const frameUrl = URL.createObjectURL(frameBlob);
-        const frameFile = new File([frameBlob], `video-frame-${Math.round(t * 1000)}.jpg`, { type: "image/jpeg" });
-        // Use the same endpoint/FormData/auth as the working single-image upload.
-        const { ok, status, body } = await callAnalyzeFrameEndpoint(frameFile, token, {
-          analysisMode: "manual",
-        });
-        if (handleProtectedAuthFailure(status, body?.detail)) {
-          URL.revokeObjectURL(url);
-          return;
-        }
-        if (!isMonitoringAnalyzeSuccess(status, body)) {
-          if (!apiErrorShown) {
-            apiErrorShown = true;
-            const errDetail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : null;
-            setToast({ type: "error", text: errDetail || "تعذر تحليل بعض اللقطات. تحقق من إعدادات الذكاء الاصطناعي." });
-          }
-          frameRows.push({
-            id: `frame-${i}`,
-            atSecond: t,
-            frameUrl,
-            violations: [],
-            errorText: typeof body?.detail === "string" && body.detail.trim() ? body.detail : "تعذر تحليل هذه اللقطة",
-          });
-          continue;
-        }
-        alertsCreated += Number(body?.alerts_created || 0);
-        const violations = Array.isArray(body?.violations) ? body.violations : [];
-        const normalized = violations
-          .filter((v) => v && !v.alias_of)
-          .map((v, idx) => ({
-          id: `${i}-${idx}-${v?.type || "x"}`,
-          atSecond: t,
-          type: v?.label_ar || v?.type || "غير محدد",
-          typeKey: canonicalMonitoringViolationType(
-            String(v?.type || v?.label_ar || `unknown-${idx}`).trim().toLowerCase(),
-          ),
-          confidence: Number(v?.confidence || 0),
-          status: v?.status || "open",
-          reason: v?.reason_ar || "",
-          personIndex: v?.person_index ?? null,
-          aliasOf: v?.alias_of ?? null,
-          frameId: `frame-${i}`,
-        }));
-        frameRows.push({
-          id: `frame-${i}`,
-          atSecond: t,
-          frameUrl,
-          violations: normalized,
-          frameReport: body?.frame_report || null,
-          errorText: "",
-        });
-      }
-      URL.revokeObjectURL(url);
-      const flatViolations = [];
-      frameRows.forEach((frame) => {
-        if (frame.errorText) return;
-        (frame.violations || []).forEach((v) => {
-          if (v.aliasOf) return;
-          flatViolations.push(v);
-        });
-      });
-      const aggregated = mergeNearbyMonitoringViolations(flatViolations, 0.9).sort(
-        (a, b) => Number(b.confidence || 0) - Number(a.confidence || 0),
-      );
-      setMonitoringVideoFrameResults(frameRows);
-      setMonitoringVideoResults(aggregated);
-      setMonitoringVideoAlertsCreated(alertsCreated);
-      setMonitoringLastAnalyzedAt(new Date().toISOString());
-      if (!apiErrorShown) {
-        if (alertsCreated > 0) {
-          setToast({ type: "success", text: `تم تسجيل ${alertsCreated} مخالفة من تحليل الفيديو.` });
-        } else if (aggregated.length > 0) {
-          setToast({ type: "success", text: "تم تحليل الفيديو وعرض المخالفات المكتشفة." });
-        } else {
-          setToast({ type: "success", text: "تم تحليل اللقطات ولم يتم اكتشاف مخالفات." });
-        }
-      }
-      await loadSupervisorAlerts();
-      await loadSupervisorCameras();
-      await loadSupervisorSummary();
-    } catch (_err) {
-      setToast({ type: "error", text: "تعذر تحليل الفيديو حالياً." });
-    } finally {
-      setMonitoringVideoAnalyzeLoading(false);
-      setMonitoringVideoProgressText("");
-    }
-  }
-
   async function resolveMonitoringAlert(alertId) {
     const token = getAccessToken();
     if (!token) return;
@@ -3030,13 +3139,33 @@ export default function Dashboard() {
     const token = getAccessToken();
     if (!token || !newCameraForm.name.trim() || !newCameraForm.location.trim()) return;
     try {
+      // Embed user:pass into the RTSP/HTTP URL if both are present. This keeps the
+      // backend schema unchanged (single stream_url field) while letting the operator
+      // enter credentials in a clean UI.
+      let streamUrl = (newCameraForm.stream_url || "").trim() || null;
+      const u = (newCameraForm.username || "").trim();
+      const p = (newCameraForm.password || "").trim();
+      if (streamUrl && u) {
+        try {
+          const url = new URL(streamUrl);
+          url.username = u;
+          if (p) url.password = p;
+          streamUrl = url.toString();
+        } catch {
+          // Fallback: best-effort string injection if URL parser fails (e.g. plain "192.168...").
+          if (streamUrl.includes("://")) {
+            const [proto, rest] = streamUrl.split("://", 2);
+            streamUrl = `${proto}://${u}${p ? `:${p}` : ""}@${rest}`;
+          }
+        }
+      }
       const res = await fetch(SUPERVISOR_CAMERAS_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           name: newCameraForm.name.trim(),
           location: newCameraForm.location.trim(),
-          stream_url: newCameraForm.stream_url.trim() || null,
+          stream_url: streamUrl,
           is_connected: true,
           ai_enabled: true,
         }),
@@ -3045,8 +3174,8 @@ export default function Dashboard() {
         setToast({ type: "error", text: "تعذر إضافة الكاميرا." });
         return;
       }
-      setNewCameraForm({ name: "", location: "", stream_url: "" });
-      setToast({ type: "success", text: "تمت إضافة الكاميرا." });
+      setNewCameraForm({ name: "", location: "", stream_url: "", username: "", password: "" });
+      setToast({ type: "success", text: "تمت إضافة الكاميرا. سيتم تفعيل كل فحوصات السلامة تلقائياً." });
       await loadSupervisorCameras();
     } catch {
       setToast({ type: "error", text: "تعذر إضافة الكاميرا." });
@@ -3253,10 +3382,6 @@ export default function Dashboard() {
     await confirmDeleteDishRecord({ recordOverride, deleteTarget });
   }
 
-  const videoAllFramesFailed =
-    monitoringVideoFrameResults.length > 0 &&
-    monitoringVideoFrameResults.every((f) => Boolean(f.errorText));
-
   const selectedZoneMeta = useMemo(
     () =>
       MONITORING_ZONE_DEFINITIONS.find((z) => z.id === selectedMonitoringZoneId) ||
@@ -3462,12 +3587,7 @@ export default function Dashboard() {
       }
 
       if (mode === RESTAURANT_CONNECTION_TYPES.UPLOADED_VIDEO) {
-        setSelectedMonitoringZoneId(zoneId);
-        setCameraAnalyzeMode("video");
-        window.setTimeout(() => {
-          supervisorMonitoringAiRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-        }, 50);
-        setToast({ type: "info", text: "انتقل إلى قسم تحليل الفيديو أدناه لرفع ملف الاختبار." });
+        setToast({ type: "info", text: "رفع ملفات الفيديو غير متاح في وضع المراقبة المباشرة." });
         return;
       }
 
@@ -3489,13 +3609,48 @@ export default function Dashboard() {
     [selectedMonitoringZoneId, setToast, resetLiveAnalysisState],
   );
 
-  const handleGoUploadedVideoMonitoringSection = useCallback((zoneId) => {
-    setSelectedMonitoringZoneId(zoneId);
-    setCameraAnalyzeMode("video");
-    window.setTimeout(() => {
-      supervisorMonitoringAiRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 50);
-  }, []);
+  const handleDetectViolation = useCallback(
+    async (zoneId, violationType, imageFile) => {
+      const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+      const busyKey = `${zoneId}:${violationType}`;
+      setCameraDetectBusy((b) => ({ ...b, [busyKey]: true }));
+      try {
+        const form = new FormData();
+        form.append("image", imageFile);
+        form.append("violation_type", violationType);
+        const defaults = mergeRestaurantCameraDefaults(MONITORING_ZONE_DEFINITIONS, restaurantCamConfigs);
+        const cfg = defaults[zoneId];
+        if (cfg?.cameraName) form.append("camera_name", cfg.cameraName);
+        const res = await fetch(AI_VIOLATIONS_DETECT_URL, {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: form,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setToast({ type: "error", text: data?.detail ?? `خطأ في الكشف (${res.status})` });
+          return;
+        }
+        setDetectResultModal({ zoneId, violationType, ...data });
+        if (data.violation_detected) {
+          setToast({ type: "error", text: `تم الكشف عن مخالفة: ${data.status_message}` });
+          void loadSupervisorSummary();
+          void loadSupervisorAlerts();
+        } else {
+          setToast({ type: "success", text: data.status_message || "لم تُكتشف مخالفة." });
+        }
+      } catch (err) {
+        setToast({ type: "error", text: String(err?.message ?? err) });
+      } finally {
+        setCameraDetectBusy((b) => {
+          const next = { ...b };
+          delete next[busyKey];
+          return next;
+        });
+      }
+    },
+    [restaurantCamConfigs, setToast, loadSupervisorSummary, loadSupervisorAlerts],
+  );
 
   useEffect(() => {
     return () => {
@@ -3514,92 +3669,6 @@ export default function Dashboard() {
     }
     return undefined;
   }, [role, location.pathname, navigate]);
-
-  const monitoringFrameGroups = useMemo(() => {
-    const groups = [];
-    for (const frame of monitoringVideoFrameResults) {
-      const cleanViolations = sortMonitoringViolationsReadable((frame.violations || []).filter((vv) => !vv.aliasOf));
-      const violationKeys = cleanViolations
-        .map((v) => canonicalMonitoringViolationType(v.typeKey || v.type))
-        .filter((k) => k && ALLOWED_MONITORING_VIOLATION_KEYS.has(k));
-      const uniqueKeys = Array.from(new Set(violationKeys));
-      const riskRaw = String(frame?.frameReport?.overall_risk_level || "").toLowerCase();
-      const riskLevel = riskRaw === "high" || riskRaw === "medium" || riskRaw === "low"
-        ? riskRaw
-        : uniqueKeys.length >= 3
-          ? "high"
-          : uniqueKeys.length > 0
-            ? "medium"
-            : "low";
-      const signature = `${uniqueKeys.slice().sort().join("|")}::${riskLevel}::${frame.errorText ? "err" : "ok"}`;
-      const summaryLabel = uniqueKeys.length
-        ? uniqueKeys.map((k) => getViolationLabel(k)).join("، ")
-        : "لا توجد مخالفات";
-
-      const item = {
-        id: frame.id,
-        frameUrl: frame.frameUrl,
-        timeStart: frame.atSecond,
-        timeEnd: frame.atSecond,
-        count: 1,
-        riskLevel,
-        violations: uniqueKeys,
-        summaryLabel,
-        errorText: frame.errorText || "",
-        signature,
-      };
-
-      const prev = groups[groups.length - 1];
-      if (prev && prev.signature === signature && !item.errorText && !prev.errorText) {
-        prev.timeEnd = frame.atSecond;
-        prev.count += 1;
-      } else {
-        groups.push(item);
-      }
-    }
-    return groups;
-  }, [monitoringVideoFrameResults]);
-
-  const filteredMonitoringFrameGroups = useMemo(() => {
-    if (monitoringFrameFilter === "violations") {
-      return monitoringFrameGroups.filter((g) => g.violations.length > 0);
-    }
-    if (monitoringFrameFilter === "high") {
-      return monitoringFrameGroups.filter((g) => g.riskLevel === "high");
-    }
-    return monitoringFrameGroups;
-  }, [monitoringFrameFilter, monitoringFrameGroups]);
-
-  const monitoringSummary = useMemo(() => {
-    const totalFrames = monitoringVideoFrameResults.length;
-    const typeCount = new Map();
-    let totalViolations = 0;
-    let hasHigh = false;
-    let hasMedium = false;
-    monitoringFrameGroups.forEach((g) => {
-      if (g.riskLevel === "high") hasHigh = true;
-      else if (g.riskLevel === "medium") hasMedium = true;
-      g.violations.forEach((k) => {
-        typeCount.set(k, (typeCount.get(k) || 0) + g.count);
-        totalViolations += g.count;
-      });
-    });
-    let topType = "";
-    let topCount = 0;
-    for (const [k, n] of typeCount.entries()) {
-      if (n > topCount) {
-        topType = k;
-        topCount = n;
-      }
-    }
-    const overallRisk = hasHigh ? "high" : hasMedium ? "medium" : "low";
-    return {
-      totalFrames,
-      totalViolations,
-      mostCommon: topType ? getViolationLabel(topType) : "—",
-      overallRisk,
-    };
-  }, [monitoringFrameGroups, monitoringVideoFrameResults.length]);
 
   return (
     <div
@@ -3682,6 +3751,7 @@ export default function Dashboard() {
         setMobileNavOpen={setMobileNavOpen}
         logout={logout}
         dashboardTitle={dashboardTitle}
+        onBeforeSectionNav={lockSectionNavForScroll}
       />
 
       <main
@@ -3701,6 +3771,13 @@ export default function Dashboard() {
             }
             systemStatusLabel={alertsError ? "تعذّر تحميل التنبيهات" : monitoringHealthLine}
             activeCamerasCount={cctvDashboardSummary.activeStreams}
+            livePersonsCount={
+              monitoringWebcamOn && monitoringAnalysisResult != null
+                ? (typeof monitoringAnalysisResult.people_count === "number"
+                    ? monitoringAnalysisResult.people_count
+                    : null)
+                : null
+            }
             loading={supervisorSummaryLoading || alertsLoading}
           />
         ) : null}
@@ -3875,6 +3952,70 @@ export default function Dashboard() {
               onSave={saveEditedRecord}
               isSaving={editSaving}
             />
+
+            {/* AI Violation Detection Result Modal */}
+            {detectResultModal && (
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+                onClick={() => setDetectResultModal(null)}
+              >
+                <div
+                  className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/15 bg-[#0a1020] p-5 shadow-2xl"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-white" dir="rtl">
+                      نتيجة الكشف:{" "}
+                      {detectResultModal.violationType === "no_gloves" ? "القفازات" : "غطاء الرأس"}
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() => setDetectResultModal(null)}
+                      className="text-slate-400 hover:text-white"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div
+                    className={`mb-3 rounded-xl border px-4 py-2.5 text-sm font-bold ${
+                      detectResultModal.violation_detected
+                        ? "border-red-500/50 bg-red-900/30 text-red-300"
+                        : "border-emerald-500/50 bg-emerald-900/30 text-emerald-300"
+                    }`}
+                    dir="rtl"
+                  >
+                    {detectResultModal.violation_detected ? "⚠️ مخالفة" : "✅ ملتزم"}
+                    <span className="ml-2 text-xs font-normal text-slate-300">
+                      — {detectResultModal.status_message}
+                    </span>
+                  </div>
+
+                  {detectResultModal.annotated_image && (
+                    <img
+                      src={`data:image/jpeg;base64,${detectResultModal.annotated_image}`}
+                      alt="annotated"
+                      className="mb-3 w-full rounded-xl"
+                    />
+                  )}
+
+                  <div className="flex gap-3 text-xs text-slate-400" dir="rtl">
+                    <span>
+                      إجمالي الكشوف: <strong className="text-white">{detectResultModal.detection_count}</strong>
+                    </span>
+                    <span>
+                      ثقة:{" "}
+                      <strong className="text-white">{detectResultModal.confidence}%</strong>
+                    </span>
+                    {detectResultModal.alert_id && (
+                      <span className="text-amber-300">
+                        رقم التنبيه: #{detectResultModal.alert_id}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
         ) : (
           <>
@@ -3902,7 +4043,7 @@ export default function Dashboard() {
             <section
               id="analytics"
               ref={supervisorAnalyticsRef}
-              className={`${SECTION_THEME.quality} mb-10 scroll-mt-28 space-y-8 sm:scroll-mt-32`}
+              className={`dashboard-section-cv ${SECTION_THEME.quality} mb-10 scroll-mt-28 space-y-8 sm:scroll-mt-32`}
             >
               <div className="border-b border-white/10 pb-4">
                 <h3 className="text-lg font-bold tracking-tight text-white">مؤشرات الأداء والتحليلات</h3>
@@ -3931,20 +4072,129 @@ export default function Dashboard() {
               </div>
             </section>
 
+            {/* ── آخر 10 مخالفات — recent violations widget with evidence thumbnails ── */}
+            {alertsList.length > 0 && (
+              <div className="mb-6 rounded-xl border border-white/10 bg-[#060d1f]/80 overflow-hidden">
+                <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-white/[0.07]">
+                  <p className="text-xs font-semibold text-slate-200">
+                    آخر 10 مخالفات
+                  </p>
+                  <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                      {alertsList.filter((a) => (a.status || "").toLowerCase() === "open").length} مفتوحة
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                      {alertsList.filter((a) => (a.status || "").toLowerCase() === "resolved").length} مُعالَجة
+                    </span>
+                  </div>
+                </div>
+                <ul className="divide-y divide-white/[0.04]">
+                  {alertsList.slice(0, 10).map((a) => {
+                    const typeLabel =
+                      String(a.label_ar || "").trim() ||
+                      getViolationLabel(canonicalMonitoringViolationType(a.type));
+                    const st = String(a.status || "").toLowerCase();
+                    const dotCls =
+                      st === "resolved" ? "bg-emerald-500"
+                      : st === "under_review" ? "bg-amber-500"
+                      : "bg-red-500";
+                    const evidence = a.image_data_url || a.evidence_image || a.snapshot || "";
+                    return (
+                      <li key={a.id} className="flex items-center gap-3 px-4 py-2 transition hover:bg-white/[0.02]">
+                        {/* Evidence thumbnail (image of the violation) */}
+                        {evidence ? (
+                          <img
+                            src={evidence}
+                            alt="دليل المخالفة"
+                            className="h-9 w-12 shrink-0 rounded-md border border-white/10 object-cover"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="flex h-9 w-12 shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/[0.03] text-[9px] text-slate-600">
+                            بدون صورة
+                          </div>
+                        )}
+                        <span className={`h-2 w-2 shrink-0 rounded-full ${dotCls}`} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[11px] font-semibold text-slate-200">{typeLabel}</p>
+                          <p className="mt-0.5 truncate text-[10px] text-slate-500">
+                            {a.camera_name || "—"} · {a.location || a.branch_name || "—"}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-[10px] text-slate-500" dir="ltr">
+                          {formatSaudiDateTime(a.created_at)}
+                        </span>
+                        <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${alertWorkflowBadgeClass(a.status)}`}>
+                          {monitoringAlertStatusAr(a.status)}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+
             <section
               id="alerts"
               ref={supervisorAlertsRef}
-              className={`${SECTION_THEME.alerts} mb-8 scroll-mt-28 sm:scroll-mt-32`}
+              className={`dashboard-section-cv ${SECTION_THEME.alerts} mb-8 scroll-mt-28 sm:scroll-mt-32`}
             >
-              <div className="mb-5 flex flex-wrap items-end justify-between gap-3 border-b border-white/10 pb-4">
+              <div className="mb-4 flex flex-wrap items-end justify-between gap-3 border-b border-white/10 pb-4">
                 <h3 className="flex items-center gap-2 text-lg font-bold tracking-tight text-white">
                   <IconBell className="h-5 w-5 text-accent-amber" />
-                  آخر التنبيهات
+                  سجل التنبيهات الأمنية
                 </h3>
-                {!alertsLoading && alertsList.length > 0 ? (
-                  <p className="text-xs tabular-nums text-slate-500">{alertsList.length} تنبيهًا في القائمة</p>
-                ) : null}
+                <div className="flex items-center gap-2">
+                  {!alertsLoading && alertsList.length > 0 ? (
+                    <p className="text-xs tabular-nums text-slate-500">{alertsList.length} تنبيه</p>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void loadSupervisorAlerts()}
+                    className="rounded-lg border border-white/15 bg-[#0B1327]/60 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:bg-[#0B1327]/90 disabled:opacity-50"
+                    disabled={alertsLoading}
+                  >
+                    {alertsLoading ? "جاري…" : "تحديث"}
+                  </button>
+                </div>
               </div>
+
+              {/* Filters */}
+              <div className="mb-4 flex flex-wrap gap-2">
+                {[
+                  { key: "all", label: "الكل" },
+                  { key: "open", label: "مفتوح" },
+                  { key: "under_review", label: "تحت المراجعة" },
+                  { key: "resolved", label: "تمت المعالجة" },
+                ].map(({ key, label }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setAlertStatusFilter(key)}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                      alertStatusFilter === key
+                        ? "border-brand-sky/45 bg-brand/20 text-sky-100"
+                        : "border-white/15 bg-[#0B1327]/60 text-slate-300 hover:border-white/25"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+                <select
+                  value={alertTypeFilter}
+                  onChange={(e) => setAlertTypeFilter(e.target.value)}
+                  className="rounded-full border border-white/15 bg-[#0B1327]/60 px-3 py-1.5 text-xs font-semibold text-slate-300 focus:outline-none"
+                >
+                  <option value="all">كل الأنواع</option>
+                  <option value="no_gloves">القفازات</option>
+                  <option value="no_headcover">غطاء الرأس</option>
+                  <option value="no_mask">الكمامة</option>
+                  <option value="no_uniform">الزي الرسمي</option>
+                </select>
+              </div>
+
               {alertsLoading ? (
                 <div className="space-y-3" aria-busy="true">
                   {[1, 2, 3, 4].map((i) => (
@@ -3955,85 +4205,140 @@ export default function Dashboard() {
                 <div className="rounded-xl border border-accent-red/35 bg-accent-red/10 px-3 py-6 text-center text-sm text-red-200">
                   {alertsError}
                 </div>
-              ) : alertsList.length > 0 ? (
-                <ExpandMoreList initialVisible={3} listClassName="flex flex-col gap-4">
-                  {alertsList.map((a) => {
-                    const sev = alertSeverityBadgeMeta(a.confidence);
-                    const typeLabel =
-                      String(a.label_ar || "").trim() ||
-                      getViolationLabel(canonicalMonitoringViolationType(a.type));
-                    const st = String(a?.status || "").toLowerCase();
-                    const canResolve = st === "open" || st === "new";
-                    return (
-                      <article
-                        key={a.id}
-                        className={`group rounded-xl border bg-[#0B1327]/80 px-4 py-4 text-start text-sm transition duration-200 hover:-translate-y-px hover:bg-[#0c162e]/92 ${alertWorkflowCardRing(a.status)}`}
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="font-semibold leading-snug text-slate-100">{a.label_ar || a.details || typeLabel}</p>
-                            <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
-                              نوع المخالفة: <span className="text-slate-300">{typeLabel}</span>
-                            </p>
+              ) : (() => {
+                const filtered = alertsList.filter((a) => {
+                  const st = String(a?.status || "").toLowerCase();
+                  const typ = String(a?.type || "").toLowerCase();
+                  if (alertStatusFilter !== "all" && st !== alertStatusFilter) return false;
+                  if (alertTypeFilter !== "all" && !typ.includes(alertTypeFilter)) return false;
+                  return true;
+                });
+                if (filtered.length === 0) {
+                  return (
+                    <EmptyState
+                      icon={alertStatusFilter !== "all" || alertTypeFilter !== "all" ? "🔍" : "🎉"}
+                      title={alertStatusFilter !== "all" || alertTypeFilter !== "all" ? "لا توجد تنبيهات بهذه الفلاتر" : "لا توجد تنبيهات حالية"}
+                      hint="عند ظهور مخالفات من المراقبة ستُعرض هنا مع حالة المعالجة والثقة."
+                    />
+                  );
+                }
+                return (
+                  <ExpandMoreList initialVisible={6} listClassName="flex flex-col gap-2">
+                    {filtered.map((a) => {
+                      const sev = alertSeverityBadgeMeta(a.confidence);
+                      const typeLabel =
+                        String(a.label_ar || "").trim() ||
+                        getViolationLabel(canonicalMonitoringViolationType(a.type));
+                      const st = String(a?.status || "").toLowerCase();
+                      const canResolve = st === "open" || st === "new";
+                      const canMarkReview = st === "open" || st === "new";
+                      const evidenceExpanded = evidenceAlertId === a.id;
+                      const evidenceUrl = a.image_data_url || a.annotated_image_url || a.snapshot_url;
+                      return (
+                        <article
+                          key={a.id}
+                          className={`group rounded-xl border bg-[#0B1327]/80 text-start transition duration-200 hover:bg-[#0c162e]/92 ${alertWorkflowCardRing(a.status)}`}
+                        >
+                          {/* Compact card header */}
+                          <div className="flex items-start gap-3 px-4 pt-3 pb-2">
+                            {/* Severity color strip */}
+                            <div className={`mt-0.5 h-full w-1 shrink-0 self-stretch rounded-full ${
+                              sev.label === "خطورة عالية" ? "bg-red-500" : sev.label === "تحذير" ? "bg-amber-500" : "bg-sky-500"
+                            }`} />
+                            <div className="min-w-0 flex-1">
+                              {/* Violation type + status row */}
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-[13px] font-semibold leading-tight text-slate-100">
+                                  {typeLabel}
+                                </p>
+                                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${alertWorkflowBadgeClass(a.status)}`}>
+                                  {monitoringAlertStatusAr(a.status)}
+                                </span>
+                                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${sev.cls}`}>
+                                  {displayAiConfidence(a.confidence)}
+                                </span>
+                              </div>
+                              {/* Meta: camera, location, time */}
+                              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
+                                {a.camera_name && (
+                                  <span className="flex items-center gap-0.5">
+                                    <span>📷</span>
+                                    <span className="text-slate-400">{a.camera_name}</span>
+                                  </span>
+                                )}
+                                {(a.branch_name || a.location) && (
+                                  <span className="flex items-center gap-0.5">
+                                    <span>📍</span>
+                                    <span>{a.branch_name || a.location}</span>
+                                  </span>
+                                )}
+                                <span dir="ltr" className="text-slate-600">{formatSaudiDateTime(a.created_at)}</span>
+                              </div>
+                              {/* Reason */}
+                              {a.details && a.details !== "—" && (
+                                <p className="mt-1 text-[10px] leading-snug text-slate-600 line-clamp-2">{a.details}</p>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-                            <span
-                              className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${alertWorkflowBadgeClass(a.status)}`}
-                            >
-                              {monitoringAlertStatusAr(a.status)}
-                            </span>
-                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${sev.cls}`}>
-                              {sev.label}
-                            </span>
+                          {/* Quick action buttons */}
+                          <div className="flex flex-wrap items-center gap-1.5 border-t border-white/[0.05] px-4 py-2">
+                            {canMarkReview && (
+                              <button
+                                type="button"
+                                disabled={alertUnderReviewLoadingId === a.id}
+                                onClick={() => void markAlertUnderReview(a.id)}
+                                className="rounded-md border border-amber-500/35 bg-amber-500/8 px-2.5 py-1 text-[10px] font-semibold text-amber-300 transition hover:bg-amber-500/14 disabled:opacity-50"
+                              >
+                                {alertUnderReviewLoadingId === a.id ? "…" : "قيد المراجعة"}
+                              </button>
+                            )}
+                            {canResolve && (
+                              <button
+                                type="button"
+                                disabled={monitoringResolveLoadingId === a.id}
+                                onClick={() => void resolveMonitoringAlert(a.id)}
+                                className="rounded-md border border-emerald-500/35 bg-emerald-500/8 px-2.5 py-1 text-[10px] font-semibold text-emerald-300 transition hover:bg-emerald-500/14 disabled:opacity-50"
+                              >
+                                {monitoringResolveLoadingId === a.id ? "…" : "تمّت المعالجة"}
+                              </button>
+                            )}
+                            {evidenceUrl && (
+                              <button
+                                type="button"
+                                onClick={() => setEvidenceAlertId(evidenceExpanded ? null : a.id)}
+                                className="mr-auto rounded-md border border-sky-500/30 bg-sky-500/8 px-2.5 py-1 text-[10px] font-semibold text-sky-300 transition hover:bg-sky-500/14"
+                              >
+                                {evidenceExpanded ? "إخفاء" : "🖼 دليل"}
+                              </button>
+                            )}
                           </div>
-                        </div>
-                        <dl className="mt-4 grid gap-2 text-[11px] leading-relaxed text-slate-400 sm:grid-cols-2">
-                          <div>
-                            <dt className="text-slate-600">الكاميرا</dt>
-                            <dd className="font-medium text-slate-200">{a.camera_name || "—"}</dd>
-                          </div>
-                          <div>
-                            <dt className="text-slate-600">الفرع / المنطقة</dt>
-                            <dd className="font-medium text-slate-200">
-                              {a.branch_name || a.branch || a.location || "—"}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt className="text-slate-600">الوقت</dt>
-                            <dd className="font-mono text-slate-300">{formatSaudiDateTime(a.created_at)}</dd>
-                          </div>
-                          <div>
-                            <dt className="text-slate-600">الثقة</dt>
-                            <dd className="tabular-nums text-slate-200">{displayAiConfidence(a.confidence)}</dd>
-                          </div>
-                        </dl>
-                        {canResolve ? (
-                          <button
-                            type="button"
-                            disabled={monitoringResolveLoadingId === a.id}
-                            onClick={() => void resolveMonitoringAlert(a.id)}
-                            className="mt-4 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold text-emerald-200 transition hover:bg-emerald-500/15 disabled:opacity-50"
-                          >
-                            {monitoringResolveLoadingId === a.id ? "جاري…" : "تمييز كمعالَج"}
-                          </button>
-                        ) : null}
-                      </article>
-                    );
-                  })}
-                </ExpandMoreList>
-              ) : (
-                <EmptyState
-                  icon="🎉"
-                  title="لا توجد تنبيهات حالية"
-                  hint="عند ظهور مخالفات من المراقبة ستُعرض هنا مع حالة المعالجة والثقة."
-                />
-              )}
+                          {/* Evidence image */}
+                          {evidenceExpanded && evidenceUrl && (
+                            <div className="border-t border-white/[0.05] px-4 pb-3 pt-2">
+                              <img
+                                src={evidenceUrl}
+                                alt="صورة دليل المخالفة"
+                                className="max-h-56 w-full rounded-lg object-contain"
+                              />
+                              {a.resolved_by && (
+                                <p className="mt-1.5 text-[10px] text-slate-600">
+                                  معالَج بواسطة: <span className="text-slate-400">{a.resolved_by}</span>
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </ExpandMoreList>
+                );
+              })()}
             </section>
 
             <section
               id="cameras"
               ref={supervisorCamerasRef}
-              className={`${SECTION_THEME.cameras} mb-8 scroll-mt-28 overflow-hidden !p-0 sm:scroll-mt-32`}
+              className={`dashboard-section-cv ${SECTION_THEME.cameras} mb-8 scroll-mt-28 overflow-hidden !p-0 sm:scroll-mt-32`}
             >
               <div className="border-b border-white/10 bg-[#020617]/95 px-5 py-4">
                 <h3 className="text-lg font-bold text-white">مراقبة الكاميرات — {PLATFORM_BRAND.nameShortAr}</h3>
@@ -4066,6 +4371,92 @@ export default function Dashboard() {
                     <p className="mt-1 text-lg font-bold tabular-nums text-sky-100">{cctvDashboardSummary.peopleCount}</p>
                   </article>
                 </div>
+              </div>
+
+              {/* System readiness panel — supervisor-friendly, no technical model names */}
+              <div className="border-b border-white/10 bg-[#050e1f]/80 px-4 py-4 sm:px-5">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    حالة نظام المراقبة
+                  </p>
+                  {aiStatusLoading ? (
+                    <Spinner className="h-4 w-4 border-2 border-white/15 border-t-sky-400" />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void loadAiStatus()}
+                      className="text-[10px] text-slate-500 underline hover:text-slate-300"
+                    >
+                      تحديث
+                    </button>
+                  )}
+                </div>
+                {aiStatus ? (
+                  (() => {
+                    const monitorReady = !!aiStatus.monitoring_model_ready;
+                    const personReady = !!aiStatus.person_detector_ready;
+                    const systemReady = monitorReady && personReady;
+                    const statusLabel = systemReady
+                      ? "نظام المراقبة جاهز للعمل"
+                      : monitorReady
+                      ? "النظام يعمل بإمكانات محدودة"
+                      : "النظام غير جاهز للمراقبة المباشرة";
+                    const statusColor = systemReady
+                      ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-200"
+                      : monitorReady
+                      ? "border-amber-500/35 bg-amber-500/10 text-amber-200"
+                      : "border-red-500/30 bg-red-500/10 text-red-300";
+                    const dotColor = systemReady
+                      ? "bg-emerald-400"
+                      : monitorReady
+                      ? "bg-amber-400"
+                      : "bg-red-500";
+
+                    const checks = [
+                      { label: "رصد العاملين أمام الكاميرا",        ready: personReady },
+                      { label: "فحص الكمامة وغطاء الرأس والقفازات", ready: monitorReady },
+                      { label: "فحص الزي الرسمي",                   ready: monitorReady },
+                      { label: "تنبيهات تلقائية فورية",             ready: monitorReady },
+                    ];
+
+                    return (
+                      <div className="space-y-3">
+                        <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${statusColor}`}>
+                          <span className={`h-2 w-2 rounded-full ${dotColor} ${systemReady ? "" : "animate-pulse"}`} />
+                          {statusLabel}
+                        </div>
+                        <ul className="grid gap-1.5 sm:grid-cols-2">
+                          {checks.map((c, i) => (
+                            <li
+                              key={i}
+                              className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-1.5 text-[11px] text-slate-300"
+                            >
+                              <span
+                                className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${
+                                  c.ready
+                                    ? "bg-emerald-500/15 text-emerald-300"
+                                    : "bg-slate-600/30 text-slate-500"
+                                }`}
+                              >
+                                {c.ready ? "✓" : "—"}
+                              </span>
+                              <span className={c.ready ? "text-slate-200" : "text-slate-500"}>{c.label}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        {!systemReady && (
+                          <p className="text-[11px] leading-relaxed text-amber-300/90">
+                            {monitorReady
+                              ? "بعض الميزات قد لا تعمل بكامل الدقة. تواصل مع مسؤول النظام للتفعيل الكامل."
+                              : "تواصل مع مسؤول النظام لإكمال إعداد المراقبة المباشرة."}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()
+                ) : aiStatusLoading ? null : (
+                  <p className="text-[11px] text-slate-600">تعذر التحقق من حالة النظام.</p>
+                )}
               </div>
 
               <div className="grid gap-4 border-b border-white/10 bg-[#030712] px-4 py-5 sm:grid-cols-2 sm:px-5 lg:grid-cols-3">
@@ -4127,7 +4518,6 @@ export default function Dashboard() {
                       onTestConnection={(draft) => void handleRestaurantCameraTest(zone.id, draft)}
                       onStartLiveMonitoring={() => void handleStartRestaurantLiveMonitoring(zone.id)}
                       onStopMonitoring={() => handleStopRestaurantLiveMonitoring(zone.id)}
-                      onGoToUploadedVideoTest={() => handleGoUploadedVideoMonitoringSection(zone.id)}
                       testBusy={cameraSetupBusy.test === zone.id}
                       saveBusy={cameraSetupBusy.save === zone.id}
                     />
@@ -4136,43 +4526,91 @@ export default function Dashboard() {
               </div>
 
               <div className="flex flex-col gap-6 px-4 pb-6 pt-5 sm:px-6">
-                <div className="rounded-xl border border-white/10 bg-[#060d1f]/40 px-4 py-3">
-                  <p className="text-xs font-semibold text-slate-200">تسجيل كاميرا في الخادم (اختياري)</p>
-                  <p className="mt-1 text-[11px] text-slate-500">
-                    يُستخدم عند ربط الكاميرات بقاعدة البيانات؛ إعدادات IP أعلاه تُحفظ محلياً إلى أن يكتمل التكامل.
-                  </p>
-                </div>
-                <div className="mb-3 grid gap-2 sm:grid-cols-3">
-                  <input
-                    type="text"
-                    placeholder="اسم الكاميرا (جديدة)"
-                    value={newCameraForm.name}
-                    onChange={(e) => setNewCameraForm((f) => ({ ...f, name: e.target.value }))}
-                    className="rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-white"
-                  />
-                  <input
-                    type="text"
-                    placeholder="الفرع/المنطقة"
-                    value={newCameraForm.location}
-                    onChange={(e) => setNewCameraForm((f) => ({ ...f, location: e.target.value }))}
-                    className="rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-white"
-                  />
-                  <input
-                    type="text"
-                    placeholder="رابط البث (اختياري)"
-                    value={newCameraForm.stream_url}
-                    onChange={(e) => setNewCameraForm((f) => ({ ...f, stream_url: e.target.value }))}
-                    className="rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-white"
-                  />
-                </div>
-                <div className="mb-2 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void addSupervisorCamera()}
-                    className="rounded-xl border border-brand-sky/35 bg-brand/15 px-3 py-2 text-xs font-semibold text-brand-sky"
-                  >
-                    إضافة كاميرا
-                  </button>
+                {/* Clean, enterprise-style add-camera form. All AI checks are auto-enabled
+                    on the backend — no per-camera toggles for the supervisor. */}
+                <div className="rounded-2xl border border-sky-500/15 bg-gradient-to-br from-[#0a1525]/80 to-[#060d1f]/80 p-5">
+                  <div className="mb-4 flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">إضافة كاميرا جديدة</p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+                        كل كاميرا تُضاف هنا تُفعَّل عليها جميع فحوصات السلامة تلقائياً: الكمامة، القفازات، غطاء الرأس، الزي الرسمي، الأرضية المبللة، النفايات.
+                      </p>
+                    </div>
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      تلقائي
+                    </span>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="text-[11px] text-slate-400">
+                      اسم الكاميرا
+                      <input
+                        type="text"
+                        placeholder="مثال: كاميرا التحضير 1"
+                        value={newCameraForm.name}
+                        onChange={(e) => setNewCameraForm((f) => ({ ...f, name: e.target.value }))}
+                        className="mt-1 w-full rounded-xl border border-white/10 bg-[#0B1327]/80 px-3 py-2 text-sm text-white outline-none focus:border-sky-400/40"
+                      />
+                    </label>
+                    <label className="text-[11px] text-slate-400">
+                      الموقع / المنطقة
+                      <input
+                        type="text"
+                        placeholder="مثال: المطبخ الرئيسي"
+                        value={newCameraForm.location}
+                        onChange={(e) => setNewCameraForm((f) => ({ ...f, location: e.target.value }))}
+                        className="mt-1 w-full rounded-xl border border-white/10 bg-[#0B1327]/80 px-3 py-2 text-sm text-white outline-none focus:border-sky-400/40"
+                      />
+                    </label>
+                    <label className="text-[11px] text-slate-400 sm:col-span-2">
+                      رابط البث (RTSP أو IP)
+                      <input
+                        type="text"
+                        placeholder="rtsp://192.168.1.10:554/Streaming/Channels/101"
+                        value={newCameraForm.stream_url}
+                        onChange={(e) => setNewCameraForm((f) => ({ ...f, stream_url: e.target.value }))}
+                        className="mt-1 w-full rounded-xl border border-white/10 bg-[#0B1327]/80 px-3 py-2 font-mono text-xs text-white outline-none focus:border-sky-400/40"
+                        dir="ltr"
+                      />
+                    </label>
+                    <label className="text-[11px] text-slate-400">
+                      اسم المستخدم (اختياري)
+                      <input
+                        type="text"
+                        placeholder="admin"
+                        value={newCameraForm.username}
+                        onChange={(e) => setNewCameraForm((f) => ({ ...f, username: e.target.value }))}
+                        className="mt-1 w-full rounded-xl border border-white/10 bg-[#0B1327]/80 px-3 py-2 text-sm text-white outline-none focus:border-sky-400/40"
+                        dir="ltr"
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label className="text-[11px] text-slate-400">
+                      كلمة المرور (اختياري)
+                      <input
+                        type="password"
+                        placeholder="••••••••"
+                        value={newCameraForm.password}
+                        onChange={(e) => setNewCameraForm((f) => ({ ...f, password: e.target.value }))}
+                        className="mt-1 w-full rounded-xl border border-white/10 bg-[#0B1327]/80 px-3 py-2 text-sm text-white outline-none focus:border-sky-400/40"
+                        dir="ltr"
+                        autoComplete="off"
+                      />
+                    </label>
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[10px] text-slate-600">
+                      يمكنك ترك رابط البث فارغاً لإنشاء سجل الكاميرا قبل ربطها بالخادم.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void addSupervisorCamera()}
+                      disabled={!newCameraForm.name.trim() || !newCameraForm.location.trim()}
+                      className="rounded-xl border border-sky-500/40 bg-sky-500/15 px-5 py-2 text-xs font-semibold text-sky-100 transition hover:bg-sky-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      إضافة الكاميرا
+                    </button>
+                  </div>
                 </div>
 
                 <div
@@ -4180,45 +4618,24 @@ export default function Dashboard() {
                   id="supervisor-monitoring-ai"
                   className="rounded-xl border border-white/10 bg-[#060d1f]/50 p-4"
                 >
-                  <p className="mb-2 text-sm font-semibold text-white">مراقبة بالذكاء الاصطناعي</p>
-                  <div className="mb-3 rounded-xl border border-sky-500/25 bg-sky-500/5 px-3 py-2 text-[11px] leading-relaxed text-slate-300">
-                    التحليل يتم على الخادم عبر YOLO (وليس Gemini للمراقبة). راجع في{" "}
-                    <span className="font-mono text-slate-200" dir="ltr">backend/.env</span>{" "}
-                    <span className="font-mono text-slate-200" dir="ltr">YOLO_MODEL_PATH</span>: الكمامة، القفازات،
-                    غطاء الرأس، الزي، والنظافة (نفايات على الأرض / موقع الحاويات). اختياريًا{" "}
-                    <span className="font-mono text-slate-200" dir="ltr">YOLO_WASTE_MODEL_PATH</span> لنموذج مخصص
-                    للنفايات إن لم تكن الفئات ضمن النموذج الأساسي. لا يُفرض رصد النظارات.
-                    حقل «الذكاء الاصطناعي» في بطاقة الكاميرا يخص التسجيل فقط ولا يوقف رفع الصورة/الفيديو للتحليل.
-                  </div>
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setCameraAnalyzeMode("image")}
-                      className={`rounded-xl border px-3 py-2 text-xs font-semibold transition ${
-                        cameraAnalyzeMode === "image"
-                          ? "border-brand-sky/45 bg-brand/20 text-sky-100"
-                          : "border-white/15 bg-[#0B1327]/60 text-slate-300 hover:text-white"
-                      }`}
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-white">مراقبة السلامة المباشرة</p>
+                    <span
+                      title="هذه واجهة لاختبار النموذج باستخدام كاميرا اللابتوب. الإنتاج النهائي يعتمد على كاميرات المراقبة (CCTV)."
+                      className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200"
                     >
-                      تحليل صورة
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setCameraAnalyzeMode("video")}
-                      className={`rounded-xl border px-3 py-2 text-xs font-semibold transition ${
-                        cameraAnalyzeMode === "video"
-                          ? "border-brand-sky/45 bg-brand/20 text-sky-100"
-                          : "border-white/15 bg-[#0B1327]/60 text-slate-300 hover:text-white"
-                      }`}
-                    >
-                      تحليل فيديو
-                    </button>
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                      وضع الاختبار — كاميرا الجهاز
+                    </span>
                   </div>
-                  <label className="mb-1 block text-xs text-slate-400">منطقة المراقبة (تُرسَل مع التحليل كـ location)</label>
+                  <p className="mb-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] leading-relaxed text-amber-200/80">
+                    قسم كاميرا الجهاز يُستخدم لاختبار وظائف الذكاء الاصطناعي فقط. المراقبة الإنتاجية تعمل عبر كاميرات المراقبة المتصلة من قسم «الكاميرات» أعلاه.
+                  </p>
+                  <label className="mb-1 block text-xs text-slate-500">منطقة المراقبة</label>
                   <select
                     value={selectedMonitoringZoneId}
                     onChange={(e) => setSelectedMonitoringZoneId(e.target.value)}
-                    className="mb-2 w-full max-w-md rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-white"
+                    className="mb-3 w-full max-w-md rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-white"
                   >
                     {MONITORING_ZONE_DEFINITIONS.map((z) => (
                       <option key={z.id} value={z.id}>
@@ -4226,14 +4643,11 @@ export default function Dashboard() {
                       </option>
                     ))}
                   </select>
-                  <p className="mb-3 text-[11px] text-slate-500">
-                    الجلسة الحالية: <span className="font-semibold text-slate-300">{selectedZoneMeta.zoneAr}</span>
-                  </p>
-                  <label className="mb-2 block text-xs text-slate-400">ربط التحليل بكاميرا مسجلة (اختياري)</label>
+                  <label className="mb-1 block text-xs text-slate-500">الكاميرا المرتبطة</label>
                   <select
                     value={monitoringCameraSelectId}
                     onChange={(e) => setMonitoringCameraSelectId(e.target.value)}
-                    className="mb-3 w-full max-w-md rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-white"
+                    className="mb-4 w-full max-w-md rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-white"
                   >
                     <option value="">بدون ربط بكاميرا</option>
                     {cameraCards.map((c) => (
@@ -4242,110 +4656,8 @@ export default function Dashboard() {
                       </option>
                     ))}
                   </select>
-                  {cameraAnalyzeMode === "image" ? (
-                    <>
-                      <label className="mb-1 block text-xs font-medium text-slate-300">اختيار صورة اختبار</label>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => setCameraTestFile(e.target.files?.[0] || null)}
-                        className="mb-3 w-full rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-slate-200"
-                      />
-                      {!cameraTestFile ? (
-                        <div className="mb-3 rounded-xl border border-dashed border-white/15 bg-[#0B1327]/40 px-3 py-4 text-center text-sm text-slate-400">
-                          اختر صورة مطبخ لاختبار فحص السلامة
-                        </div>
-                      ) : null}
-                      {cameraTestPreviewUrl ? (
-                        <div className="mb-3 rounded-xl border border-white/10 bg-[#060d1f]/80 p-3">
-                          <img src={cameraTestPreviewUrl} alt="" className="block max-h-72 w-full object-contain" />
-                        </div>
-                      ) : null}
-                    </>
-                  ) : (
-                    <>
-                      <label className="mb-1 block text-xs font-medium text-slate-300">اختيار فيديو اختبار</label>
-                      <input
-                        type="file"
-                        accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
-                        onChange={(e) => onSelectMonitoringVideoFile(e.target.files?.[0] || null)}
-                        className="mb-3 w-full rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-slate-200"
-                      />
-                      {cameraVideoError ? (
-                        <div className="mb-3 rounded-xl border border-accent-red/35 bg-accent-red/10 px-3 py-3 text-sm text-red-200">
-                          {cameraVideoError}
-                        </div>
-                      ) : null}
-                      {cameraVideoFile ? (
-                        <div className="mb-3 rounded-xl border border-white/10 bg-[#060d1f]/80 p-3 text-xs text-slate-300">
-                          <p>الاسم: <span className="text-slate-100">{cameraVideoFile.name}</span></p>
-                          <p className="mt-1">الحجم: <span className="text-slate-100">{formatFileBytes(cameraVideoFile.size)}</span></p>
-                          <p className="mt-1">المدة: <span className="text-slate-100">{formatVideoDuration(cameraVideoDurationSec)}</span></p>
-                        </div>
-                      ) : (
-                        <div className="mb-3 rounded-xl border border-dashed border-white/15 bg-[#0B1327]/40 px-3 py-4 text-center text-sm text-slate-400">
-                          اختر فيديو مطبخ بصيغة mp4 أو mov أو webm
-                        </div>
-                      )}
-                      {cameraVideoPreviewUrl ? (
-                        <div className="mb-3 rounded-xl border border-white/10 bg-[#060d1f]/80 p-3">
-                          <video
-                            src={cameraVideoPreviewUrl}
-                            controls
-                            className="block max-h-72 w-full rounded-lg bg-black object-contain"
-                            onLoadedMetadata={(e) => {
-                              const dur = Number(e.currentTarget.duration);
-                              setCameraVideoDurationSec(Number.isFinite(dur) ? dur : null);
-                            }}
-                          />
-                        </div>
-                      ) : null}
-                      <div className="mb-3 rounded-xl border border-sky-500/35 bg-sky-500/10 px-3 py-3 text-sm text-sky-100">
-                        سيتم تحليل الفيديو على شكل لقطات متتابعة باستخدام endpoint التحليل الحالي.
-                      </div>
-                    </>
-                  )}
-                  <div className="flex flex-wrap gap-2">
-                    {cameraAnalyzeMode === "image" ? (
-                      <button
-                        type="button"
-                        disabled={monitoringAnalyzeLoading || !cameraTestFile}
-                        onClick={() => void analyzeMonitoringFrameUpload()}
-                        className="rounded-xl border border-brand-sky/35 bg-brand/15 px-4 py-2 text-xs font-semibold text-brand-sky disabled:opacity-50"
-                      >
-                        {monitoringAnalyzeLoading ? (
-                          <span className="inline-flex items-center gap-2">
-                            <Spinner className="h-4 w-4 border-2 border-white/30 border-t-white" />
-                            جاري التحليل…
-                          </span>
-                        ) : (
-                          "تحليل الصورة"
-                        )}
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={monitoringVideoAnalyzeLoading || !cameraVideoFile}
-                        onClick={() => void analyzeMonitoringVideoUpload()}
-                        className="rounded-xl border border-brand-sky/35 bg-brand/15 px-4 py-2 text-xs font-semibold text-brand-sky disabled:opacity-50"
-                      >
-                        {monitoringVideoAnalyzeLoading ? (
-                          <span className="inline-flex items-center gap-2">
-                            <Spinner className="h-4 w-4 border-2 border-white/30 border-t-white" />
-                            جاري تحليل الفيديو...
-                          </span>
-                        ) : (
-                          "تحليل الفيديو"
-                        )}
-                      </button>
-                    )}
-                  </div>
-                  <div className="mt-4 rounded-xl border border-emerald-500/25 bg-[#041014]/80 p-4">
-                    <p className="mb-2 text-sm font-semibold text-emerald-100">مراقبة مباشرة — كاميرا الجهاز</p>
-                    <p className="mb-3 text-[11px] leading-relaxed text-slate-400">
-                      يبقى البث مفتوحاً طوال الجلسة؛ التحليل التلقائي يرسل إطاراً كل ~10 ثوانٍ بعد اكتمال تحليل YOLO على الخادم (أول لقطة قد تستغرق 1–3 دقائق).
-                      المعاينة الحالية تُعرض على المناطق الثلاث حتى يُربط لاحقاً بث RTSP/IP منفصل لكل بطاقة دون تغيير الواجهة.
-                    </p>
+                  <div className="rounded-xl border border-emerald-500/25 bg-[#041014]/80 p-4">
+                    <p className="mb-3 text-sm font-semibold text-emerald-100">الكاميرا المباشرة</p>
                     <LiveMonitoringZoneCards
                       zones={MONITORING_ZONE_DEFINITIONS}
                       selectedZoneId={selectedMonitoringZoneId}
@@ -4355,8 +4667,8 @@ export default function Dashboard() {
                       liveAutoOn={monitoringLiveAutoOn}
                       liveTickBusy={liveTickBusy}
                     />
-                    <p className="mb-2 mt-4 text-[11px] text-slate-500">
-                      المنطقة النشطة للتحليل (تتطابق مع القائمة أعلاه):{" "}
+                    <p className="mb-2 mt-3 text-[11px] text-slate-500">
+                      المنطقة النشطة:{" "}
                       <span className="font-semibold text-slate-300">{selectedZoneMeta.zoneAr}</span>
                     </p>
                     <video
@@ -4390,7 +4702,7 @@ export default function Dashboard() {
                         onClick={() => setMonitoringLiveAutoOn(true)}
                         className="rounded-xl border border-violet-500/40 bg-violet-500/15 px-4 py-2 text-xs font-semibold text-violet-100 disabled:opacity-40"
                       >
-                        بدء التحليل المباشر (YOLO)
+                        بدء المراقبة التلقائية
                       </button>
                       <button
                         type="button"
@@ -4398,7 +4710,7 @@ export default function Dashboard() {
                         onClick={() => resetLiveAnalysisState({ stopAuto: true })}
                         className="rounded-xl border border-white/20 bg-[#0B1327]/80 px-4 py-2 text-xs font-semibold text-slate-300 disabled:opacity-40"
                       >
-                        إيقاف التحليل المباشر
+                        إيقاف المراقبة
                       </button>
                       <button
                         type="button"
@@ -4406,7 +4718,7 @@ export default function Dashboard() {
                         onClick={() => void analyzeMonitoringWebcamFrame()}
                         className="rounded-xl border border-brand-sky/40 bg-brand/15 px-4 py-2 text-xs font-semibold text-brand-sky disabled:opacity-50"
                       >
-                        {monitoringWebcamBusy || monitoringAnalyzeLoading ? "جاري التحليل…" : "تحليل لقطة يدوي"}
+                        {monitoringWebcamBusy || monitoringAnalyzeLoading ? "جاري التحليل…" : "تحليل فوري"}
                       </button>
                       {(liveTickBusy || liveAnalysisError || monitoringAnalyzeLoading) && monitoringWebcamOn ? (
                         <button
@@ -4414,14 +4726,15 @@ export default function Dashboard() {
                           onClick={() => resetLiveAnalysisState({ stopAuto: false })}
                           className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs font-semibold text-amber-100"
                         >
-                          إعادة ضبط حالة التحليل
+                          إعادة الضبط
                         </button>
                       ) : null}
                     </div>
                     {monitoringLiveAutoOn && monitoringWebcamOn ? (
-                      <p className="mb-2 text-[11px] text-emerald-200/90">
-                        التحليل التلقائي نشط — إطار جديد كل ~10 ثوانٍ بعد اكتمال YOLO. للتسجيل الفوري استخدم «تحليل لقطة يدوي».
-                      </p>
+                      <div className="mb-2 flex items-center gap-2 text-[11px] text-emerald-300/90">
+                        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+                        المراقبة التلقائية نشطة
+                      </div>
                     ) : null}
                     {liveAnalysisError ? (
                       <p className="mb-2 text-[11px] text-red-300" role="alert">
@@ -4432,17 +4745,9 @@ export default function Dashboard() {
                       <p className="mt-2 text-xs text-red-300">{monitoringWebcamError}</p>
                     ) : null}
                   </div>
-                  {cameraAnalyzeMode === "video" ? (
-                    <p className="mt-2 text-[11px] text-slate-500">
-                      يتم حفظ المخالفات المكتشفة عبر تنبيهات النظام عند توفر شروط الحفظ في backend.
-                    </p>
-                  ) : null}
-                  {cameraAnalyzeMode === "video" && monitoringVideoProgressText ? (
-                    <p className="mt-1 text-xs text-slate-400">{monitoringVideoProgressText}</p>
-                  ) : null}
                   {monitoringLastAnalyzedAt ? (
-                    <p className="mt-2 text-[11px] text-slate-500">
-                      آخر تحليل: {formatSaudiDateTime(monitoringLastAnalyzedAt)}
+                    <p className="mt-2 text-[11px] text-slate-600">
+                      آخر فحص: {formatSaudiDateTime(monitoringLastAnalyzedAt)}
                     </p>
                   ) : null}
                 </div>
@@ -4451,158 +4756,16 @@ export default function Dashboard() {
                 {(monitoringAnalysisResult != null ||
                   (monitoringLiveAutoOn && monitoringWebcamOn) ||
                   monitoringWebcamBusy ||
-                  (monitoringAnalyzeLoading && cameraAnalyzeMode === "image")) ? (
-                  <MonitoringResultPanel
+                  monitoringAnalyzeLoading) ? (
+                  <PpeStatusDashboard
                     result={monitoringAnalysisResult}
                     liveActive={monitoringLiveAutoOn && monitoringWebcamOn}
                     liveTickBusy={liveTickBusy}
                     manualLoading={monitoringAnalyzeLoading || monitoringWebcamBusy}
                     zoneName={selectedZoneMeta.zoneAr}
                     lastAnalyzedAt={monitoringLastAnalyzedAt}
+                    role={role}
                   />
-                ) : null}
-
-                {cameraAnalyzeMode === "video" ? (
-                  <div>
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className="text-sm font-semibold text-white">نتائج تحليل الفيديو</span>
-                      <span className="text-xs text-slate-400">تنبيهات محفوظة: {monitoringVideoAlertsCreated}</span>
-                    </div>
-                    <div className="mb-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                      <article className="rounded-xl border border-white/10 bg-[#060d1f]/70 p-3">
-                        <p className="text-[11px] text-slate-400">إجمالي اللقطات</p>
-                        <p className="mt-1 text-lg font-bold text-white">{monitoringSummary.totalFrames}</p>
-                      </article>
-                      <article className="rounded-xl border border-white/10 bg-[#060d1f]/70 p-3">
-                        <p className="text-[11px] text-slate-400">إجمالي المخالفات</p>
-                        <p className="mt-1 text-lg font-bold text-white">{monitoringSummary.totalViolations}</p>
-                      </article>
-                      <article className="rounded-xl border border-white/10 bg-[#060d1f]/70 p-3">
-                        <p className="text-[11px] text-slate-400">الأكثر تكرارًا</p>
-                        <p className="mt-1 text-sm font-semibold text-slate-100">{monitoringSummary.mostCommon}</p>
-                      </article>
-                      <article className="rounded-xl border border-white/10 bg-[#060d1f]/70 p-3">
-                        <p className="text-[11px] text-slate-400">مستوى الخطر العام</p>
-                        <p
-                          className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${
-                            MONITORING_RISK_META[monitoringSummary.overallRisk]?.chip || MONITORING_RISK_META.low.chip
-                          }`}
-                        >
-                          {MONITORING_RISK_META[monitoringSummary.overallRisk]?.label || MONITORING_RISK_META.low.label}
-                        </p>
-                      </article>
-                    </div>
-
-                    <div className="mb-3 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setMonitoringFrameFilter("all")}
-                        className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
-                          monitoringFrameFilter === "all"
-                            ? "border-brand-sky/45 bg-brand/20 text-sky-100"
-                            : "border-white/15 bg-[#0B1327]/60 text-slate-300"
-                        }`}
-                      >
-                        كل اللقطات
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setMonitoringFrameFilter("violations")}
-                        className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
-                          monitoringFrameFilter === "violations"
-                            ? "border-orange-500/45 bg-orange-500/15 text-orange-100"
-                            : "border-white/15 bg-[#0B1327]/60 text-slate-300"
-                        }`}
-                      >
-                        لقطات فيها مخالفات
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setMonitoringFrameFilter("high")}
-                        className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
-                          monitoringFrameFilter === "high"
-                            ? "border-red-500/45 bg-red-500/15 text-red-100"
-                            : "border-white/15 bg-[#0B1327]/60 text-slate-300"
-                        }`}
-                      >
-                        عالية الخطورة
-                      </button>
-                    </div>
-
-                    {monitoringVideoFrameResults.length > 0 ? (
-                      <div className="mb-4">
-                        <p className="mb-2 text-xs font-semibold text-slate-300">نتيجة كل لقطة</p>
-                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                          {filteredMonitoringFrameGroups.map((frame) => {
-                            const riskMeta = MONITORING_RISK_META[frame.riskLevel] || MONITORING_RISK_META.low;
-                            return (
-                              <article
-                                key={frame.id}
-                                className={`rounded-xl border p-3 text-xs ${
-                                  frame.violations.length > 0
-                                    ? "border-white/10 bg-[#0B1327]/75 text-slate-200"
-                                    : "border-white/10 bg-[#0B1327]/45 text-slate-300 opacity-80"
-                                }`}
-                              >
-                                {frame.frameUrl ? (
-                                  <img
-                                    src={frame.frameUrl}
-                                    alt=""
-                                    className={`mb-2 w-full rounded-lg object-cover ${
-                                      frame.violations.length > 0 ? "h-24" : "h-16"
-                                    }`}
-                                  />
-                                ) : null}
-                                <div className="mb-1 flex items-center justify-between gap-2">
-                                  <p className="text-slate-400">
-                                    الوقت:{" "}
-                                    <span className="text-slate-100">
-                                      {formatVideoDuration(frame.timeStart)}
-                                      {frame.count > 1 ? ` - ${formatVideoDuration(frame.timeEnd)}` : ""}
-                                    </span>
-                                  </p>
-                                  <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${riskMeta.chip}`}>
-                                    {riskMeta.label}
-                                  </span>
-                                </div>
-                                {frame.errorText ? (
-                                  <p className="mt-1 text-red-200">{frame.errorText}</p>
-                                ) : frame.violations.length === 0 ? (
-                                  <p className="mt-1 text-emerald-200">🟢 لا توجد مخالفات</p>
-                                ) : (
-                                  <div className="mt-2 flex flex-wrap gap-1.5">
-                                    {frame.violations.map((typeKey) => {
-                                      const chip = monitoringViolationChipMeta(typeKey);
-                                      return (
-                                        <span key={`${frame.id}-${typeKey}`} className={`rounded-full border px-2 py-1 text-[11px] ${chip.cls}`}>
-                                          {chip.label}
-                                        </span>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                                {frame.count > 1 ? (
-                                  <p className="mt-2 text-[11px] text-slate-500">حالة متكررة في {frame.count} لقطات متتالية</p>
-                                ) : null}
-                              </article>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {monitoringVideoResults.length === 0 ? (
-                      videoAllFramesFailed ? (
-                        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-5 text-center text-sm text-red-200">
-                          تعذر تحليل الفيديو. تحقق من إعدادات الذكاء الاصطناعي.
-                        </div>
-                      ) : monitoringVideoFrameResults.length > 0 ? (
-                        <div className="rounded-xl border border-dashed border-white/15 bg-[#0B1327]/50 px-3 py-5 text-center text-sm text-slate-400">
-                          تم تحليل اللقطات — لا توجد مخالفات مكتشفة.
-                        </div>
-                      ) : null
-                    ) : null}
-                  </div>
                 ) : null}
 
                 {cameraCardsLoading ? (
@@ -4647,8 +4810,12 @@ export default function Dashboard() {
                               <span className="text-slate-500">الموقع:</span> {c.location}
                             </p>
                             <p>
-                              <span className="text-slate-500">الذكاء الاصطناعي:</span>{" "}
-                              {c.ai_enabled ? "مفعّل" : "غير مفعّل"}
+                              <span className="text-slate-500">المراقبة الذكية:</span>{" "}
+                              {c.ai_enabled ? (
+                                <span className="font-semibold text-emerald-300">مفعّلة</span>
+                              ) : (
+                                <span className="text-slate-400">غير مفعّلة</span>
+                              )}
                             </p>
                             <p className="sm:col-span-2">
                               <span className="text-slate-500">آخر تحليل:</span>{" "}
@@ -4700,327 +4867,40 @@ export default function Dashboard() {
               )}
             </section>
 
-            <section
-              id="reports"
-              ref={supervisorReportsRef}
-              className={`${SECTION_THEME.reports} mb-8 scroll-mt-28 sm:scroll-mt-32`}
-            >
-              <div className="mb-4 flex flex-wrap items-end justify-between gap-3 border-b border-white/10 pb-3">
-                <div>
-                  <h3 className="text-lg font-bold text-white">التقارير</h3>
-                  <p className="mt-1 text-xs text-slate-400">مؤشرات ملخّصة من الخادم؛ تصدير CSV للملفات والتحليل الخارجي.</p>
-                </div>
-                <button
-                  type="button"
-                  disabled={!supervisorSummary}
-                  onClick={() => exportSupervisorReportCsv()}
-                  className="rounded-xl border border-brand-sky/40 bg-brand/15 px-3 py-2 text-xs font-semibold text-sky-100 transition hover:bg-brand/25 disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  تصدير CSV
-                </button>
-              </div>
-              {supervisorSummaryLoading ? (
-                <div className="grid gap-3 sm:grid-cols-2" aria-busy="true">
-                  {[1, 2, 3, 4].map((i) => (
-                    <SkeletonPulse key={i} className="h-[4.5rem] w-full" />
-                  ))}
-                </div>
-              ) : supervisorSummary ? (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-xl border border-white/10 bg-[#0B1327]/70 p-3">
-                        <p className="text-xs text-slate-500">أكثر موظف لديه مراجعات</p>
-                        <p className="mt-1 text-sm font-semibold text-white">
-                          {supervisorSummary.top_employee_review_name || "لا توجد بيانات كافية"}
-                          {supervisorSummary.top_employee_review_count
-                            ? ` (${supervisorSummary.top_employee_review_count})`
-                            : ""}
-                        </p>
-                      </div>
-                      <div className="rounded-xl border border-white/10 bg-[#0B1327]/70 p-3">
-                        <p className="text-xs text-slate-500">أكثر طبق تم تسجيله</p>
-                        <p className="mt-1 text-sm font-semibold text-white">
-                          {supervisorSummary.most_common_dish || "لا توجد بيانات كافية"}
-                        </p>
-                      </div>
-                      <div className="rounded-xl border border-white/10 bg-[#0B1327]/70 p-3">
-                        <p className="text-xs text-slate-500">أكثر طبق يحتاج مراجعة</p>
-                        <p className="mt-1 text-sm font-semibold text-white">
-                          {supervisorSummary.most_reviewed_dish || "لا توجد بيانات كافية"}
-                        </p>
-                      </div>
-                      <div className="rounded-xl border border-white/10 bg-[#0B1327]/70 p-3">
-                        <p className="text-xs text-slate-500">متوسط الثقة</p>
-                        <p className="mt-1 text-sm font-semibold text-white">
-                          {supervisorSummary.average_confidence != null
-                            ? `${supervisorSummary.average_confidence}%`
-                            : "لا توجد بيانات كافية"}
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="rounded-xl border border-dashed border-white/10 bg-[#0B1327]/50 px-4 py-10 text-center text-sm text-slate-400">
-                      لا توجد بيانات كافية للتقارير. تأكد من اتصال الخادم أو من صلاحيات المشرف.
-                    </div>
-                  )}
-              {(role === "supervisor" || role === "admin") ? (
-                <div className="mt-8 border-t border-white/10 pt-6">
-                  <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-                    <div>
-                      <h4 className="text-base font-bold text-white">تقرير مخالفات المراقبة</h4>
-                      <p className="mt-1 text-xs text-slate-400">
-                        بيانات من تنبيهات المراقبة المحفوظة في النظام (حتى 500 سجلًا لكل استعلام).
-                        {role === "supervisor" ? (
-                          <span className="mt-1 block text-[11px] text-slate-500">
-                            يعرض المشرف بيانات فرعه المرتبطة بحسابه فقط.
-                          </span>
-                        ) : null}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setViolationsReportFrom("");
-                          setViolationsReportTo("");
-                          void fetchViolationsReport("", "");
-                        }}
-                        className="rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-white/25 hover:text-white"
-                      >
-                        إظهار الكل
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void fetchViolationsReport(violationsReportFrom, violationsReportTo)}
-                        className="rounded-xl border border-brand-sky/40 bg-brand/15 px-3 py-2 text-xs font-semibold text-sky-100 transition hover:bg-brand/25"
-                      >
-                        تطبيق الفلتر
-                      </button>
-                      <button
-                        type="button"
-                        disabled={violationsReportLoading || violationsReportStats.total === 0}
-                        onClick={() => exportViolationsReportLatestCsv()}
-                        className="rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-brand-sky/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
-                      >
-                        تصدير CSV
-                      </button>
-                      <button
-                        type="button"
-                        disabled={violationsReportLoading || violationsReportStats.total === 0}
-                        onClick={() => printViolationsReportPdf()}
-                        title="طباعة أو حفظ PDF عبر نافذة المتصفح (اختر «حفظ كملف PDF»)"
-                        className="rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-brand-sky/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
-                      >
-                        تصدير PDF
-                      </button>
-                    </div>
-                  </div>
-                  <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    <label className="rounded-xl border border-white/10 bg-[#060d1f]/80 p-3">
-                      <span className="text-xs text-slate-400">من تاريخ</span>
-                      <input
-                        type="date"
-                        value={violationsReportFrom}
-                        onChange={(e) => setViolationsReportFrom(e.target.value)}
-                        className="mt-2 w-full rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-sky/50"
-                      />
-                    </label>
-                    <label className="rounded-xl border border-white/10 bg-[#060d1f]/80 p-3">
-                      <span className="text-xs text-slate-400">إلى تاريخ</span>
-                      <input
-                        type="date"
-                        value={violationsReportTo}
-                        onChange={(e) => setViolationsReportTo(e.target.value)}
-                        className="mt-2 w-full rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-sky/50"
-                      />
-                    </label>
-                    <div className="rounded-xl border border-white/10 bg-[#060d1f]/80 p-3 sm:col-span-2">
-                      <p className="text-xs text-slate-400">النطاق الزمني</p>
-                      <p className="mt-2 text-xs leading-relaxed text-slate-500">
-                        يعتمد تقويم الرياض. اترك الحقلين فارغَين ثم اضغط «تطبيق الفلتر» لعرض أحدث السجلات دون
-                        تقييد بالتاريخ.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mb-6 rounded-2xl border border-white/10 bg-[#050c1c]/90 p-4">
-                    <h4 className="mb-1 text-sm font-bold text-white">الرسوم التحليلية</h4>
-                    <p className="mb-4 text-[11px] text-slate-500">
-                      تُستخرَج من بيانات الخادم والفلاتر أعلاه؛ لا توجد بيانات وهمية.
-                    </p>
-                    <ReportsAnalyticsCharts
-                      violationsRows={violationsReportRows}
-                      reviewRecords={reviewRecords}
-                      dateFrom={violationsReportFrom}
-                      dateTo={violationsReportTo}
-                    />
-                  </div>
-
-                  {violationsReportError ? (
-                    <div className="mb-4 rounded-xl border border-accent-red/35 bg-accent-red/10 px-3 py-3 text-sm text-red-200">
-                      {violationsReportError}
-                    </div>
-                  ) : null}
-                  {violationsReportLoading ? (
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true">
-                      {[1, 2, 3, 4, 5, 6].map((i) => (
-                        <SkeletonPulse key={i} className="h-24 w-full" />
-                      ))}
-                    </div>
-                  ) : violationsReportStats.total === 0 ? (
-                    <EmptyState
-                      icon="📊"
-                      title="لا توجد بيانات تقارير للفترة الحالية"
-                      hint="جرّب توسيع نطاق التاريخ أو إظهار الكل من أزرار التصفية أعلاه."
-                    />
-                  ) : (
-                    <>
-                      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <div className="rounded-xl border border-white/10 bg-[#020617]/70 p-4">
-                          <p className="text-xs text-slate-500">إجمالي المخالفات</p>
-                          <p className="mt-1 text-2xl font-bold tabular-nums text-white">{violationsReportStats.total}</p>
-                        </div>
-                        <div className="rounded-xl border border-white/10 bg-[#020617]/70 p-4">
-                          <p className="text-xs text-slate-500">مفتوح</p>
-                          <p className="mt-1 text-2xl font-bold tabular-nums text-red-200">
-                            {violationsReportStats.openCount}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-white/10 bg-[#020617]/70 p-4">
-                          <p className="text-xs text-slate-500">تمت المعالجة</p>
-                          <p className="mt-1 text-2xl font-bold tabular-nums text-emerald-200">
-                            {violationsReportStats.resolvedCount}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-brand-sky/25 bg-brand/10 p-4">
-                          <p className="text-xs text-slate-500">أكثر مخالفة تكرارًا</p>
-                          {violationsReportStats.topRepeated.count > 0 ? (
-                            <>
-                              <p className="mt-1 text-sm font-semibold text-white">
-                                {violationsReportStats.topRepeated.label}
-                              </p>
-                              <p className="mt-1 text-xs text-slate-400">
-                                {violationsReportStats.topRepeated.count} مرة
-                              </p>
-                            </>
-                          ) : (
-                            <p className="mt-1 text-sm text-slate-500">لا توجد بيانات</p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="mb-6 grid gap-4 lg:grid-cols-2">
-                        <div className="rounded-xl border border-white/10 bg-[#060d1f]/60 p-4">
-                          <p className="mb-3 text-sm font-semibold text-white">المخالفات حسب النوع</p>
-                          <ul className="space-y-2 text-sm">
-                            {VIOLATION_REPORT_CATEGORY_ORDER.map((c) => (
-                              <li key={c.key} className="flex items-center justify-between gap-2 text-slate-300">
-                                <span>{c.label}</span>
-                                <span className="tabular-nums font-semibold text-slate-100">
-                                  {violationsReportStats.typeCounts[c.key]}
-                                </span>
-                              </li>
-                            ))}
-                            {violationsReportStats.typeCounts._other > 0 ? (
-                              <li className="flex items-center justify-between gap-2 border-t border-white/10 pt-2 text-slate-400">
-                                <span>أخرى</span>
-                                <span className="tabular-nums font-semibold text-slate-200">
-                                  {violationsReportStats.typeCounts._other}
-                                </span>
-                              </li>
-                            ) : null}
-                          </ul>
-                        </div>
-                        <div className="rounded-xl border border-white/10 bg-[#060d1f]/60 p-4">
-                          <p className="mb-3 text-sm font-semibold text-white">حسب الحالة</p>
-                          <ul className="space-y-3 text-sm">
-                            <li className="flex items-center justify-between gap-2">
-                              <span className="text-slate-400">مفتوح</span>
-                              <span className="tabular-nums font-bold text-red-200">
-                                {violationsReportStats.openCount}
-                              </span>
-                            </li>
-                            <li>
-                              <div className="h-2 overflow-hidden rounded-full bg-[#020617]">
-                                <div
-                                  className="h-full rounded-full bg-red-500/70 transition-all"
-                                  style={{
-                                    width: `${violationsReportStats.total ? Math.round((violationsReportStats.openCount / violationsReportStats.total) * 100) : 0}%`,
-                                  }}
-                                />
-                              </div>
-                            </li>
-                            <li className="flex items-center justify-between gap-2">
-                              <span className="text-slate-400">تمت المعالجة</span>
-                              <span className="tabular-nums font-bold text-emerald-200">
-                                {violationsReportStats.resolvedCount}
-                              </span>
-                            </li>
-                            <li>
-                              <div className="h-2 overflow-hidden rounded-full bg-[#020617]">
-                                <div
-                                  className="h-full rounded-full bg-emerald-500/70 transition-all"
-                                  style={{
-                                    width: `${violationsReportStats.total ? Math.round((violationsReportStats.resolvedCount / violationsReportStats.total) * 100) : 0}%`,
-                                  }}
-                                />
-                              </div>
-                            </li>
-                          </ul>
-                        </div>
-                      </div>
-                      <div>
-                        <p className="mb-3 text-sm font-semibold text-white">أحدث المخالفات</p>
-                        <div className="overflow-x-auto rounded-xl border border-white/10">
-                          <table className="min-w-full text-start text-xs sm:text-sm">
-                            <thead className="border-b border-white/10 bg-[#0B1327]/80 text-slate-400">
-                              <tr>
-                                <th className="px-3 py-2">النوع</th>
-                                <th className="px-3 py-2">التفاصيل</th>
-                                <th className="px-3 py-2">الحالة</th>
-                                <th className="px-3 py-2">الفرع</th>
-                                <th className="px-3 py-2">الكاميرا</th>
-                                <th className="px-3 py-2">الوقت</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-white/5 text-slate-200">
-                              {violationsReportStats.latest.slice(0, violationsLatestExpand.limit).map((row) => (
-                                <tr key={row.id} className="bg-[#060d1f]/40">
-                                  <td className="px-3 py-2 font-medium text-white">
-                                    {row.label_ar?.trim() || getViolationLabel(row.type)}
-                                  </td>
-                                  <td className="max-w-[14rem] truncate px-3 py-2 text-slate-400" title={row.details}>
-                                    {row.details || "—"}
-                                  </td>
-                                  <td className="px-3 py-2">{monitoringAlertStatusAr(row.status)}</td>
-                                  <td className="px-3 py-2">{row.branch || "—"}</td>
-                                  <td className="px-3 py-2">{row.camera_name || "—"}</td>
-                                  <td className="whitespace-nowrap px-3 py-2">{formatSaudiDateTime(row.created_at)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                          {violationsLatestExpand.hasMore ? (
-                            <div className="flex justify-center border-t border-white/10 bg-[#060d1f]/30 py-3">
-                              <button
-                                type="button"
-                                onClick={() => violationsLatestExpand.toggle()}
-                                className="rounded-xl border border-white/15 bg-[#0B1327]/85 px-5 py-2 text-xs font-semibold text-slate-200 transition hover:border-brand-sky/35 hover:text-white"
-                              >
-                                {violationsLatestExpand.expanded ? "عرض أقل ↑" : "عرض المزيد ↓"}
-                              </button>
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              ) : null}
-            </section>
+            {(role === "supervisor" || role === "admin") ? (
+              <ReportsHub
+                sectionRef={supervisorReportsRef}
+                sectionClassName={SECTION_THEME.reports}
+                supervisorSummary={supervisorSummary}
+                supervisorSummaryLoading={supervisorSummaryLoading}
+                violationsReportRows={violationsReportRows}
+                violationsReportLoading={violationsReportLoading}
+                violationsReportError={violationsReportError}
+                violationsReportFrom={violationsReportFrom}
+                violationsReportTo={violationsReportTo}
+                setViolationsReportFrom={setViolationsReportFrom}
+                setViolationsReportTo={setViolationsReportTo}
+                fetchViolationsReport={fetchViolationsReport}
+                violationsReportStats={violationsReportStats}
+                reviewRecords={reviewRecords}
+                cameraCards={cameraCards}
+                cameraCardsLoading={cameraCardsLoading}
+                supervisorEmployees={supervisorEmployees}
+                employeesLoading={supervisorEmployeesLoading}
+                apiReachable={apiReachable}
+                onExportCsvSummary={exportSupervisorReportCsv}
+                onExportCsvViolations={exportViolationsReportLatestCsv}
+                onPrintViolationsPdf={printViolationsReportPdf}
+                onPrintDishPdf={printDishReviewReportPdf}
+                onExportCsvDish={exportReviewRecordsCsv}
+                setToast={setToast}
+              />
+            ) : null}
 
             <section
               id="dish-reviews"
               ref={supervisorReviewsRef}
-              className={`${SECTION_THEME.neutral} mb-8 scroll-mt-28 sm:scroll-mt-32`}
+              className={`dashboard-section-cv ${SECTION_THEME.neutral} mb-8 scroll-mt-28 sm:scroll-mt-32`}
             >
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
@@ -5198,7 +5078,16 @@ export default function Dashboard() {
                     return (
                       <article key={r.id} className="rounded-2xl border border-white/10 bg-[#060d1f]/85 p-4 shadow-glass sm:p-5">
                         <div className="flex flex-col gap-5 lg:flex-row lg:items-stretch">
-                          <FoodImageThumb src={apiUrl(r.image_url)} alt={r.confirmed_label || r.predicted_label || "dish"} sizeClass="h-32 w-32 shrink-0 rounded-xl sm:h-36 sm:w-36" />
+                          <FoodImageThumb
+                            src={resolveDishImageUrl(r.image_url, r.image_available !== false)}
+                            alt={r.confirmed_label || r.predicted_label || "dish"}
+                            sizeClass="h-32 w-32 shrink-0 rounded-xl sm:h-36 sm:w-36"
+                            emptyLabel={
+                              r.image_available === false
+                                ? "الصورة غير متوفرة"
+                                : "لا توجد صورة"
+                            }
+                          />
                           <div className="min-w-0 flex-1 space-y-3">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${badge}`}>
@@ -5292,7 +5181,7 @@ export default function Dashboard() {
             <section
               id="employees"
               ref={supervisorEmployeesRef}
-              className={`${SECTION_THEME.neutral} mb-8 scroll-mt-28 sm:scroll-mt-32`}
+              className={`dashboard-section-cv ${SECTION_THEME.neutral} mb-8 scroll-mt-28 sm:scroll-mt-32`}
             >
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
@@ -5391,7 +5280,8 @@ export default function Dashboard() {
                           type="button"
                           onClick={() => {
                             setReviewFilters((f) => ({ ...f, employee: e.email || e.username }));
-                            document.getElementById("dish-reviews")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                            lockSectionNavForScroll();
+                            scrollToSectionElement("dish-reviews");
                           }}
                           className="col-span-2 mt-2 rounded-lg border border-brand-sky/40 bg-brand/15 px-2 py-1 text-xs font-semibold text-sky-100"
                         >
@@ -5614,45 +5504,9 @@ export default function Dashboard() {
                     </div>
                   </article>
 
-                  <article className="rounded-2xl border border-white/10 bg-[#0B1327]/70 p-4">
-                    <h4 className="text-sm font-semibold text-white">
-                      هـ — إعدادات النظام العامة
-                    </h4>
-                    <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                      <label className="rounded-xl border border-white/10 bg-[#060d1f]/80 p-3">
-                        <span className="text-xs text-slate-400">اسم المنصة المعروض</span>
-                        <input
-                          type="text"
-                          value={adminSettings.system.platformName}
-                          onChange={(e) =>
-                            setAdminSettings((prev) => ({
-                              ...prev,
-                              system: { ...prev.system, platformName: e.target.value },
-                            }))
-                          }
-                          className="mt-2 w-full rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-sky/50"
-                        />
-                      </label>
-                      <label className="rounded-xl border border-white/10 bg-[#060d1f]/80 p-3">
-                        <span className="text-xs text-slate-400">اللغة الافتراضية</span>
-                        <input
-                          type="text"
-                          value={adminSettings.system.defaultLanguage}
-                          disabled
-                          className="mt-2 w-full rounded-xl border border-white/10 bg-[#0B1327]/50 px-3 py-2 text-sm text-slate-300"
-                        />
-                      </label>
-                      <label className="rounded-xl border border-white/10 bg-[#060d1f]/80 p-3">
-                        <span className="text-xs text-slate-400">المنطقة الزمنية</span>
-                        <input
-                          type="text"
-                          value={adminSettings.system.timezone}
-                          disabled
-                          className="mt-2 w-full rounded-xl border border-white/10 bg-[#0B1327]/50 px-3 py-2 text-sm text-slate-300"
-                        />
-                      </label>
-                    </div>
-                  </article>
+                  {/* Section "هـ — إعدادات النظام العامة" was removed in v2: language, timezone,
+                      and platform name are fixed system constants and shouldn't be operator-editable.
+                      Operational settings live in sections (أ–د) above and (و) below. */}
 
                   <article className="rounded-2xl border border-white/10 bg-[#0B1327]/70 p-4">
                     <h4 className="text-sm font-semibold text-white">و — إدارة المستخدمين</h4>
@@ -6207,7 +6061,9 @@ export default function Dashboard() {
                   <th className="border border-slate-300 px-1 py-2 text-center font-semibold">الطبق المقترح</th>
                   <th className="border border-slate-300 px-1 py-2 text-center font-semibold">الطبق المعتمد</th>
                   <th className="border border-slate-300 px-1 py-2 text-center font-semibold">الكمية</th>
+                  <th className="border border-slate-300 px-1 py-2 text-center font-semibold">المصدر</th>
                   <th className="border border-slate-300 px-1 py-2 text-center font-semibold">الحالة</th>
+                  <th className="border border-slate-300 px-1 py-2 text-center font-semibold">صورة</th>
                   <th className="border border-slate-300 px-1 py-2 text-center font-semibold">وقت التسجيل</th>
                   <th className="border border-slate-300 px-1 py-2 text-center font-semibold">وقت المراجعة</th>
                 </tr>
@@ -6224,11 +6080,27 @@ export default function Dashboard() {
                     <td className="border border-slate-200 px-1 py-1.5 break-words">{row.predicted_label || "—"}</td>
                     <td className="border border-slate-200 px-1 py-1.5 break-words">{row.confirmed_label || "—"}</td>
                     <td className="border border-slate-200 px-1 py-1.5 text-center tabular-nums">{row.quantity ?? "—"}</td>
+                    <td className="border border-slate-200 px-1 py-1.5 break-words text-center">
+                      {row.source_entity || "—"}
+                    </td>
                     <td
                       className="border border-slate-200 px-1 py-1.5 text-center font-semibold"
                       style={dishReviewStatusPrintStyle(row.status)}
                     >
                       {dishReviewStatusArExport(row.status)}
+                    </td>
+                    <td className="border border-slate-200 px-1 py-1.5 text-center">
+                      {resolveDishImageUrl(row.image_url, row.image_available !== false) ? (
+                        <img
+                          src={resolveDishImageUrl(row.image_url, row.image_available !== false)}
+                          alt=""
+                          width={56}
+                          height={56}
+                          style={{ objectFit: "cover", borderRadius: 4 }}
+                        />
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="border border-slate-200 px-1 py-1.5 whitespace-normal break-words text-center font-mono">
                       {row.recorded_at ? formatSaudiDateTime(row.recorded_at) : "—"}

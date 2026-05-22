@@ -96,9 +96,10 @@ class Settings:
     # Optional on-prem 9-class ResNet18 (see ml/custom_food/README.md). Inference only; no auto-train.
     SKA_CUSTOM_FOOD_MODEL_PATH: str = os.getenv("SKA_CUSTOM_FOOD_MODEL_PATH", "")
     SKA_CUSTOM_FOOD_LABEL_MAP_PATH: str = os.getenv("SKA_CUSTOM_FOOD_LABEL_MAP_PATH", "")
-    # Persisted dish photos (data URLs from clients are written here on create).
+    # Permanent dish photos — NOT temp/cache. Render: mount persistent disk to this path.
+    # Example: DISH_MEDIA_DIR=/var/data/ska/media/dishes
     DISH_MEDIA_DIR: Path = Path(
-        os.getenv("DISH_MEDIA_DIR", str(_backend_dir / "media" / "dish_images")),
+        os.getenv("DISH_MEDIA_DIR", str(_backend_dir / "media" / "dishes")),
     ).resolve()
     # Camera monitoring AI (separate from dish Roboflow serverless URL)
     ROBOFLOW_MONITORING_MODEL_URL: str = os.getenv("ROBOFLOW_MONITORING_MODEL_URL", "").strip()

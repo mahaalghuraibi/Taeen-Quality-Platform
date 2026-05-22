@@ -2,17 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer utilities {
+  /* Off-screen dashboard sections skip layout/paint until near viewport. */
+  .dashboard-section-cv {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 520px;
+  }
+}
+
 @layer base {
   /* Native scroll — smooth + fixed body backgrounds cause main-thread jank on wheel. */
   html {
     scroll-behavior: auto;
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
+    /* Reserve scrollbar space → prevents layout shift when sections expand/collapse. */
+    scrollbar-gutter: stable;
   }
 
   body {
     min-height: 100dvh;
     overflow-x: clip;
+    /* Stable, non-jittery scrolling on macOS/iOS WebKit. */
+    overscroll-behavior-y: none;
     background-color: #020617;
     color: #e2e8f0;
     font-size: 15px;

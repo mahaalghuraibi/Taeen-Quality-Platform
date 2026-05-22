@@ -1,4 +1,4 @@
-# Security report — منصة تعيين الجودة
+# Security report — منصة عين الجودة
 
 **High-security baseline completed.**  
 This review and hardening apply to the FastAPI backend and React frontend in `ska-system/`. **This does not mean 100% security**; production should also use HTTPS, secure reverse-proxy and server configuration, database backups, monitoring, incident response, and periodic security testing.

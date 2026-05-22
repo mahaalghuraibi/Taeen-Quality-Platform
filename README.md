@@ -1,4 +1,4 @@
-# منصة تعيين الجودة · Taeen Quality Platform
+# منصة عين الجودة · Ayn Al-Jawdah Quality Platform
 
 **AI-powered smart kitchen monitoring and quality analytics platform.**
 
@@ -199,4 +199,4 @@ Use and attribution per your organization’s policy. External APIs (Gemini, Rob
 
 ---
 
-*منصة تعيين الجودة — Taeen Quality Platform*
+*منصة عين الجودة — Ayn Al-Jawdah Quality Platform*

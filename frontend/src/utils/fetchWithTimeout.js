@@ -43,7 +43,7 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_FE
 /** User-facing Arabic message for failed network / timeout. */
 export function formatMonitoringFetchError(err, fallback = "تعذر تحليل الصورة أو تسجيل المخالفة.") {
   if (err?.code === "TIMEOUT") {
-    return "انتهت مهلة التحليل. أول طلب بعد إيقاف الخادم قد يستغرق 1–3 دقائق (تحميل نموذج YOLO). حاول مرة أخرى.";
+    return "انتهت مهلة التحليل. أول طلب بعد إيقاف الخادم قد يستغرق 1–3 دقائق لتحميل النظام. حاول مرة أخرى.";
   }
   return formatFetchError(err, fallback);
 }

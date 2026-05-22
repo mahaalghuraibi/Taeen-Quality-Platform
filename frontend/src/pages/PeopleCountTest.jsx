@@ -110,7 +110,7 @@ export default function PeopleCountTest() {
           <button style={S.backBtn} onClick={() => navigate(-1)}>← رجوع</button>
           <h1 style={S.title}>عداد الأشخاص</h1>
           <p style={S.subtitle}>
-            ارفع صورة لعد الأشخاص بنموذج <strong>YOLOv8n</strong> — كشف تجاوز الحد المسموح
+            ارفع صورة لعد الأشخاص تلقائياً — والتنبيه عند تجاوز الحد المسموح
           </p>
         </div>
 
@@ -246,15 +246,7 @@ export default function PeopleCountTest() {
               </table>
             )}
 
-            {/* Model diagnostics */}
-            {result.model_info && (
-              <div style={S.modelInfo}>
-                <span style={S.modelInfoLabel}>النموذج:</span>
-                <span style={S.modelInfoChip}>YOLOv8n COCO</span>
-                <span style={S.modelInfoChip}>conf {(result.model_info.conf * 100).toFixed(0)}%</span>
-                <span style={S.modelInfoChip}>NMS IoU {result.model_info.nms_iou}</span>
-              </div>
-            )}
+            {/* Diagnostics removed from supervisor view — kept only for admin debugging */}
           </div>
         )}
       </div>

@@ -1,4 +1,4 @@
-# Frontend — منصة تعيين الجودة · Taeen Quality Platform
+# Frontend — منصة عين الجودة · Ayn Al-Jawdah Quality Platform
 
 React single-page application for **kitchen quality monitoring**, **dish workflows**, **supervisor analytics**, and **RTL Arabic** UX.
 

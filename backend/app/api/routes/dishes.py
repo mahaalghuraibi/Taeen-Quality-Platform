@@ -1,5 +1,4 @@
 import logging
-import mimetypes
 import json
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -18,11 +17,11 @@ from app.models.user import User
 from app.schemas.dish_record import DishDetectResponse, DishRecordCreate, DishRecordOut, DishRecordUpdate
 from app.services.dish_detection_service import detect_dish_from_image
 from app.services.dish_image_storage import (
-    dish_media_dir,
     materialize_dish_image_url,
-    safe_dish_filename,
+    serve_dish_image_file,
     try_delete_stored_dish_file,
 )
+from app.services.dish_record_serialize import dish_record_to_out, dish_records_to_out
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/dishes", tags=["dishes"])
@@ -39,14 +38,8 @@ def _recorded_at_naive_utc_now() -> datetime:
 
 @router.get("/files/{filename}")
 def get_dish_image_file(filename: str) -> FileResponse:
-    """Public file read for <img src>; filenames are unguessable UUIDs."""
-    if not safe_dish_filename(filename):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    path = dish_media_dir() / filename
-    if not path.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    return FileResponse(path, media_type=media_type)
+    """Serve permanent dish image from backend/media/dishes/."""
+    return serve_dish_image_file(filename)
 
 
 @router.get(
@@ -57,13 +50,13 @@ def get_dish_image_file(filename: str) -> FileResponse:
 def list_dishes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> list[DishRecord]:
+) -> list[DishRecordOut]:
     query = db.query(DishRecord).filter(DishRecord.tenant_id == current_user.tenant_id)
     if current_user.role == ROLE_STAFF:
         query = query.filter(DishRecord.user_id == current_user.id)
     elif current_user.role == "supervisor":
         query = query.filter(DishRecord.branch_id == current_user.branch_id)
-    return query.all()
+    return dish_records_to_out(query.all())
 
 
 @router.post(
@@ -76,7 +69,7 @@ def create_dish(
     payload: DishRecordCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> DishRecord:
+) -> DishRecordOut:
     values = payload.model_dump(exclude={"user_id", "tenant_id", "recorded_at", "image_data_url"})
     values["user_id"] = current_user.id
     values["tenant_id"] = current_user.tenant_id
@@ -126,7 +119,7 @@ def create_dish(
         ) from exc
     db.refresh(dish)
     logger.info("create_dish success id=%s", dish.id)
-    return dish
+    return dish_record_to_out(dish)
 
 
 @router.post(
@@ -178,7 +171,7 @@ def update_dish(
     payload: DishRecordUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> DishRecord:
+) -> DishRecordOut:
     dish = _get_dish_for_user(db, dish_id, current_user)
     if dish is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="السجل غير موجود.")
@@ -196,7 +189,7 @@ def update_dish(
         ) from exc
     db.refresh(dish)
     logger.info("update_dish success id=%s", dish_id)
-    return dish
+    return dish_record_to_out(dish)
 
 
 @router.delete(

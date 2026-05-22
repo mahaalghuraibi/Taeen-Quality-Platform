@@ -31,18 +31,38 @@ export function isRenderableImageSrc(src) {
     s.startsWith("blob:") ||
     s.startsWith("data:") ||
     s.startsWith("/api/") ||
-    s.includes("/api/v1/dishes/files/")
+    s.includes("/api/v1/dishes/files/") ||
+    s.includes("/api/v1/media/dishes/")
   );
+}
+
+/** Absolute image URL for CSV/Excel/PDF exports (empty when file missing). */
+export function dishReportImageLink(record) {
+  if (!record) return "—";
+  const available = record.imageAvailable !== false && record.image_available !== false;
+  const url = resolveDishImageUrl(record.image_url || record.imageUrl, available);
+  return url || "—";
+}
+
+/** Resolve API image_url (staff or supervisor review row) to a full <img src>. */
+export function resolveDishImageUrl(imageUrl, imageAvailable = true) {
+  if (imageAvailable === false) return "";
+  let u = String(imageUrl || "").trim();
+  if (!u) return "";
+  if (u.startsWith("/api/")) u = apiUrl(u);
+  if (isRenderableImageSrc(u)) return u;
+  return "";
 }
 
 /** Resolve the best thumbnail src from a dish record object. */
 export function dishRecordThumbSrc(record) {
+  if (!record) return "";
   if (record.localPreviewUrl) return record.localPreviewUrl;
-  let u = record.imageUrl || record.imageDataUrl || "";
-  u = String(u).trim();
-  if (u.startsWith("/api/")) u = apiUrl(u);
-  if (isRenderableImageSrc(u)) return u.trim();
-  return "";
+  const available = record.imageAvailable !== false && record.image_available !== false;
+  return resolveDishImageUrl(
+    record.imageUrl || record.imageDataUrl || record.image_url,
+    available,
+  );
 }
 
 export function supervisorStatusText(status) {

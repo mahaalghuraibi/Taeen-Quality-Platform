@@ -4,27 +4,30 @@
  */
 
 export const VIOLATION_CATEGORY_KEYS_ORDER = [
-  "no_mask",
   "no_gloves",
   "no_headcover",
+  "no_mask",
   "no_uniform",
   "improper_uniform",
   "improper_trash_location",
   "trash_floor",
   "wet_floor",
   "waste_area",
+  "people_counting",
 ];
 
 const LABEL_AR = {
-  no_mask: "عدم ارتداء الكمامة",
   no_gloves: "عدم ارتداء القفازات",
   no_headcover: "عدم ارتداء غطاء الرأس",
+  no_mask: "عدم ارتداء الكمامة",
   no_uniform: "عدم ارتداء الزي الرسمي",
   improper_uniform: "عدم ارتداء الزي الرسمي",
   improper_trash_location: "النفايات في مكان غير مخصص",
   trash_floor: "النفايات على الأرض",
+  trash_on_floor: "النفايات على الأرض",
   wet_floor: "أرضية مبللة",
   waste_area: "موقع النفايات والحاويات",
+  people_counting: "مخالفة عدد الأشخاص",
   unknown: "غير محدد",
 };
 
@@ -34,9 +37,10 @@ export function canonicalViolationType(type) {
   if (!raw) return "";
   if (raw === "no_glove") return "no_gloves";
   if (raw === "no_helmet" || raw === "no_head_cover") return "no_headcover";
+  if (raw === "improper_uniform") return "no_uniform";
   if (raw === "improper_waste_area") return "improper_trash_location";
-  if (raw === "trash_location") return "improper_trash_location";
-  if (raw === "trash_on_floor") return "trash_floor";
+  if (raw === "trash_location" || raw === "trash_wrong_location") return "improper_trash_location";
+  if (raw === "trash_on_floor" || raw === "trash_floor") return "trash_floor";
   if (raw === "containers") return "waste_area";
   return raw;
 }
