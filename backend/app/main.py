@@ -28,16 +28,24 @@ _DEV_CORS = [
     "http://127.0.0.1:5178",
 ]
 
+# Always-allowed production frontend origins so the live mobile site keeps
+# working even if CORS_ALLOW_ORIGINS is missing on the API service.
+_PROD_FRONTEND_ALLOWLIST = [
+    "https://taeen-quality-frontend.onrender.com",
+]
+
 
 def _cors_allow_origins() -> list[str]:
     raw = str(getattr(settings, "CORS_ALLOW_ORIGINS_RAW", "") or "").strip()
     if settings.is_production:
-        if not raw:
+        configured = [p.strip() for p in raw.split(",") if p.strip()]
+        merged = list(dict.fromkeys(configured + _PROD_FRONTEND_ALLOWLIST))
+        if not configured:
             logger.warning(
-                "CORS_ALLOW_ORIGINS is empty in production — browsers cannot call this API cross-origin until set.",
+                "CORS_ALLOW_ORIGINS not set — falling back to built-in frontend allowlist: %s",
+                _PROD_FRONTEND_ALLOWLIST,
             )
-            return []
-        return [p.strip() for p in raw.split(",") if p.strip()]
+        return merged
     if not raw:
         return list(_DEV_CORS)
     return [p.strip() for p in raw.split(",") if p.strip()]

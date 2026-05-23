@@ -620,6 +620,34 @@
   }
 }
 
+/* Mobile (≤640px): kill the most expensive GPU effects (large blur orbs +
+   infinite mesh/zoom animations) — supervisors on phones get smooth scroll. */
+@media (max-width: 640px) {
+  .hero-orb,
+  .hero-orb-a,
+  .hero-orb-b,
+  .hero-orb-c,
+  .hero-grid-lines,
+  .hero-scanline::after,
+  .hero-scanline-h::after,
+  .hero-shine-sweep,
+  .hero-main-card::after,
+  .hero-bg-zoom,
+  .hero-parallax-deep,
+  .hero-parallax-mid,
+  .hero-mesh-anim {
+    display: none !important;
+    animation: none !important;
+  }
+  .hero-premium-base {
+    background: linear-gradient(160deg, #020617 0%, #0f172a 55%, #020617 100%) !important;
+    animation: none !important;
+  }
+  .hero-main-card-wrap::before {
+    display: none !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .hero-premium-base,
   .hero-mesh-anim,

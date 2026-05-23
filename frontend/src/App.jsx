@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import {
   Navigate,
   RouterProvider,
@@ -10,23 +11,40 @@ import LandingPage from "./pages/Landing.jsx";
 import LoginPage from "./pages/Login.jsx";
 import RegisterPage from "./pages/Register.jsx";
 import AdminRequestPage from "./pages/AdminRequest.jsx";
-import AdminUsersPage from "./pages/AdminUsers.jsx";
-import AdminRequestsPage from "./pages/AdminRequests.jsx";
-import Dashboard from "./pages/Dashboard.jsx";
-import MaskDetectionTest from "./pages/MaskDetectionTest.jsx";
-import PeopleCountTest from "./pages/PeopleCountTest.jsx";
 
-/** Same dashboard shell for all authenticated app routes (paths drive section via Dashboard). */
+/* Heavy authenticated routes are loaded on demand to keep first paint fast on mobile. */
+const Dashboard = lazy(() => import("./pages/Dashboard.jsx"));
+const AdminUsersPage = lazy(() => import("./pages/AdminUsers.jsx"));
+const AdminRequestsPage = lazy(() => import("./pages/AdminRequests.jsx"));
+const MaskDetectionTest = lazy(() => import("./pages/MaskDetectionTest.jsx"));
+const PeopleCountTest = lazy(() => import("./pages/PeopleCountTest.jsx"));
+
+function RouteFallback() {
+  return (
+    <div
+      className="flex min-h-[100dvh] items-center justify-center bg-[#020617] text-slate-300"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex flex-col items-center gap-3">
+        <svg className="h-8 w-8 animate-spin text-brand-sky" viewBox="0 0 24 24" fill="none" aria-hidden>
+          <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
+          <path d="M21 12a9 9 0 0 1-9 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+        </svg>
+        <p className="text-sm text-slate-400">جاري التحميل…</p>
+      </div>
+    </div>
+  );
+}
+
 const dashboardElement = (
   <PrivateRoute>
-    <Dashboard />
+    <Suspense fallback={<RouteFallback />}>
+      <Dashboard />
+    </Suspense>
   </PrivateRoute>
 );
 
-/**
- * Production SaaS URL structure — BrowserRouter (history API), no HashRouter.
- * Deploy SPA with fallback to index.html (Vite preview/dev handle this automatically).
- */
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
   { path: "/signup", element: <RegisterPage /> },
@@ -38,7 +56,9 @@ const router = createBrowserRouter([
     path: "/admin/users",
     element: (
       <AdminRoute>
-        <AdminUsersPage />
+        <Suspense fallback={<RouteFallback />}>
+          <AdminUsersPage />
+        </Suspense>
       </AdminRoute>
     ),
   },
@@ -46,7 +66,9 @@ const router = createBrowserRouter([
     path: "/admin/requests",
     element: (
       <AdminRoute>
-        <AdminRequestsPage />
+        <Suspense fallback={<RouteFallback />}>
+          <AdminRequestsPage />
+        </Suspense>
       </AdminRoute>
     ),
   },
@@ -73,22 +95,23 @@ const router = createBrowserRouter([
   { path: "/supervisor", element: <Navigate to="/analytics" replace /> },
   { path: "/monitoring", element: <Navigate to="/cameras" replace /> },
 
-  /* Mask detection test tool — requires login */
   {
     path: "/mask-check",
     element: (
       <PrivateRoute>
-        <MaskDetectionTest />
+        <Suspense fallback={<RouteFallback />}>
+          <MaskDetectionTest />
+        </Suspense>
       </PrivateRoute>
     ),
   },
-
-  /* People counting test tool — requires login */
   {
     path: "/people-count-check",
     element: (
       <PrivateRoute>
-        <PeopleCountTest />
+        <Suspense fallback={<RouteFallback />}>
+          <PeopleCountTest />
+        </Suspense>
       </PrivateRoute>
     ),
   },

@@ -1,8 +1,13 @@
 /** Default HTTP timeout for API calls (ms). */
 export const DEFAULT_FETCH_TIMEOUT_MS = 45_000;
 
-/** Login / register / profile bootstrap (Render cold start can exceed 30s). */
-export const AUTH_FETCH_TIMEOUT_MS = import.meta.env.PROD ? 90_000 : 30_000;
+/**
+ * Login / register / profile bootstrap.
+ * Render free tier cold start can exceed 30s, so production allows 60s — but we
+ * keep it tight enough that a stalled connection surfaces a clear error message
+ * instead of an indefinite freeze.
+ */
+export const AUTH_FETCH_TIMEOUT_MS = import.meta.env.PROD ? 60_000 : 25_000;
 
 /** Monitoring frame analysis (YOLO download + first inference on Render can be slow). */
 export const MONITORING_FETCH_TIMEOUT_MS = import.meta.env.PROD ? 180_000 : 90_000;
