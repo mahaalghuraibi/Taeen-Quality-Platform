@@ -182,6 +182,8 @@ ska-system/
 
 | Document | Purpose |
 |----------|---------|
+| [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | **دليل المستخدم** — مشرفو ومالكو المطاعم (عربي) |
+| [`docs/ADMIN_GUIDE.md`](docs/ADMIN_GUIDE.md) | **دليل مدير النظام** — نشر، قاعدة بيانات، AI، أمان (عربي) |
 | [`frontend/README.md`](frontend/README.md) | Frontend setup, scripts, troubleshooting |
 | [`backend/README.md`](backend/README.md) | API modules, env vars, production notes |
 | [`SECURITY_REPORT.md`](SECURITY_REPORT.md) | Security baseline & checklist |
