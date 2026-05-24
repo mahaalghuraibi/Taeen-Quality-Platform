@@ -30,12 +30,16 @@ services:
         value: "false"
 
   # Static SPA — auto-deploys on every push to main.
+  # After changing `routes`, run Dashboard → Blueprint → Sync (or add the same
+  # /* → /index.html Rewrite rule under Redirects/Rewrites for this service).
   - type: web
     name: taeen-quality-frontend
     runtime: static
     rootDir: frontend
     autoDeploy: true
-    buildCommand: npm ci && npm run build
+    # Do not ship dist/404.html — Render serves it for unknown paths with HTTP 404
+    # (index content + 404 status). SPA routing must use rewrite rules below.
+    buildCommand: npm ci && npm run build && rm -f dist/404.html
     staticPublishPath: dist
     pullRequestPreviewsEnabled: true
     envVars:
