@@ -180,10 +180,20 @@ ska-system/
 
 ## Documentation map | خريطة الوثائق
 
+### 📘 الوثائق العربية للتسليم التجاري (Arabic delivery docs)
+
+| Document | الغرض |
+|----------|-------|
+| [`docs/CLIENT_GUIDE_AR.md`](docs/CLIENT_GUIDE_AR.md) | **دليل العميل** — مالك / مشرف / موظف المطعم |
+| [`docs/ADMIN_GUIDE_AR.md`](docs/ADMIN_GUIDE_AR.md) | **دليل مدير النظام** — إدارة وظيفية وإدارية |
+| [`docs/TECHNICAL_REQUIREMENTS_AR.md`](docs/TECHNICAL_REQUIREMENTS_AR.md) | **المتطلبات التقنية** — البنية، API، النماذج، DB |
+| [`docs/DEPLOYMENT_GUIDE_AR.md`](docs/DEPLOYMENT_GUIDE_AR.md) | **دليل النشر** — Render، Docker، Backup، Rollback |
+| [`docs/SECURITY_GUIDE_AR.md`](docs/SECURITY_GUIDE_AR.md) | **دليل الأمان** — JWT، CORS، الاستجابة للحوادث |
+
+### Engineering reference
+
 | Document | Purpose |
 |----------|---------|
-| [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | **دليل المستخدم** — مشرفو ومالكو المطاعم (عربي) |
-| [`docs/ADMIN_GUIDE.md`](docs/ADMIN_GUIDE.md) | **دليل مدير النظام** — نشر، قاعدة بيانات، AI، أمان (عربي) |
 | [`frontend/README.md`](frontend/README.md) | Frontend setup, scripts, troubleshooting |
 | [`backend/README.md`](backend/README.md) | API modules, env vars, production notes |
 | [`SECURITY_REPORT.md`](SECURITY_REPORT.md) | Security baseline & checklist |
