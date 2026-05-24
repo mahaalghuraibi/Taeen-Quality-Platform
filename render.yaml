@@ -44,7 +44,51 @@ services:
       - key: VITE_API_BASE_URL
         value: https://taeen-quality-platform.onrender.com
     routes:
-      # SPA fallback for client-side routes (React Router).
+      # SPA fallback — React Router (history API). Render serves real files first;
+      # these rewrites apply only when no static asset exists at the path.
+      # Explicit paths help when blueprint rules need re-sync; /* is the catch-all.
+      - type: rewrite
+        source: /login
+        destination: /index.html
+      - type: rewrite
+        source: /signup
+        destination: /index.html
+      - type: rewrite
+        source: /register
+        destination: /index.html
+      - type: rewrite
+        source: /dashboard
+        destination: /index.html
+      - type: rewrite
+        source: /dashboard/*
+        destination: /index.html
+      - type: rewrite
+        source: /cameras
+        destination: /index.html
+      - type: rewrite
+        source: /cameras/*
+        destination: /index.html
+      - type: rewrite
+        source: /reports
+        destination: /index.html
+      - type: rewrite
+        source: /reports/*
+        destination: /index.html
+      - type: rewrite
+        source: /alerts
+        destination: /index.html
+      - type: rewrite
+        source: /alerts/*
+        destination: /index.html
+      - type: rewrite
+        source: /analytics
+        destination: /index.html
+      - type: rewrite
+        source: /settings
+        destination: /index.html
+      - type: rewrite
+        source: /admin/*
+        destination: /index.html
       - type: rewrite
         source: /*
         destination: /index.html
