@@ -34,7 +34,6 @@ import SupervisorAnalyticsRecharts from "../components/supervisor/SupervisorAnal
 import ReportsHub from "../components/reports/ReportsHub.jsx";
 import StickyAnalyticsSummaryBar from "../components/supervisor/StickyAnalyticsSummaryBar.jsx";
 import ExpandMoreList from "../components/shared/ExpandMoreList.jsx";
-import { useExpandMoreList } from "../hooks/useExpandMoreList.js";
 import EmptyState from "../components/shared/EmptyState.jsx";
 import FoodImageThumb from "../components/shared/FoodImageThumb.jsx";
 import { dishReportImageLink, resolveDishImageUrl } from "../utils/dishHelpers.js";
@@ -402,7 +401,6 @@ const SUPERVISOR_ALERTS_URL = apiUrl("/api/v1/supervisor/alerts");
 const SUPERVISOR_ALERT_STATUS_URL = (id) => apiUrl(`/api/v1/supervisor/alerts/${id}/status`);
 const AI_STATUS_URL = apiUrl("/api/v1/ai/status");
 const MONITORING_ANALYZE_URL = apiUrl("/api/v1/monitoring/analyze-frame");
-const AI_VIOLATIONS_DETECT_URL = apiUrl("/api/v1/violations/detect");
 const DISH_REVIEW_UPDATED_EVENT = "ska:dish-review-updated";
 const SUPERVISOR_SUMMARY_URL = apiUrl("/api/v1/supervisor/summary");
 const SUPERVISOR_EMPLOYEES_URL = apiUrl("/api/v1/supervisor/employees");
@@ -453,27 +451,6 @@ function displayAiConfidence(raw) {
   return `${Math.round(pct * 10) / 10}%`;
 }
 
-function monitoringCheckCardClass(status) {
-  const s = String(status || "").toLowerCase();
-  if (s === "safe") {
-    return "border-2 border-emerald-500 bg-emerald-500/[0.18] shadow-[0_0_14px_rgba(16,185,129,0.18)]";
-  }
-  if (s === "violation") {
-    return "border-2 border-red-500 bg-red-500/[0.18] shadow-[0_0_14px_rgba(239,68,68,0.2)]";
-  }
-  if (s === "needs_review" || s === "uncertain") {
-    return "border-2 border-amber-400 bg-amber-500/[0.16] shadow-[0_0_12px_rgba(245,158,11,0.18)]";
-  }
-  return "border-white/15 bg-[#0B1327]/70";
-}
-
-function monitoringStatusLabelAr(status) {
-  const s = String(status || "").toLowerCase();
-  if (s === "safe") return "سليم";
-  if (s === "violation") return "مخالفة";
-  if (s === "needs_review") return "يحتاج مراجعة";
-  return "غير مؤكد";
-}
 
 function monitoringAlertStatusAr(status) {
   const s = String(status || "").toLowerCase();
@@ -550,13 +527,6 @@ const VIOLATION_REPORT_CATEGORY_ORDER = VIOLATION_CATEGORY_KEYS_ORDER.map((key) 
   label: getViolationLabel(key),
 }));
 
-const MONITORING_RISK_META = {
-  high: { label: "مرتفع", chip: "border-red-500/35 bg-red-500/15 text-red-200" },
-  medium: { label: "متوسط", chip: "border-amber-500/35 bg-amber-500/15 text-amber-200" },
-  low: { label: "منخفض", chip: "border-emerald-500/35 bg-emerald-500/15 text-emerald-200" },
-};
-
-/** Merge repeated violations across consecutive nearby video frames (same type + same worker). */
 /** Downscale JPEG from live &lt;video&gt; for bandwidth + UI responsiveness */
 function captureLiveMonitoringBlob(videoEl, maxLongEdge = 960, jpegQuality = 0.72) {
   return new Promise((resolve) => {
@@ -610,27 +580,6 @@ function summarizeLiveViolations(violations) {
   return uniq.slice(0, 5).join("، ");
 }
 
-function mergeNearbyMonitoringViolations(flatList, gapSec = 0.9) {
-  const sorted = [...flatList].sort((a, b) => a.atSecond - b.atSecond);
-  const out = [];
-  for (const v of sorted) {
-    const last = out[out.length - 1];
-    const pk = `${v.typeKey}|${v.personIndex != null ? String(v.personIndex) : ""}`;
-    const lk = last
-      ? `${last.typeKey}|${last.personIndex != null ? String(last.personIndex) : ""}`
-      : "";
-    if (last && pk === lk && v.atSecond - last.atSecond <= gapSec) {
-      const useNew = Number(v.confidence) >= Number(last.confidence);
-      out[out.length - 1] = useNew
-        ? { ...v, mergedFrames: (last.mergedFrames || 1) + 1 }
-        : { ...last, mergedFrames: (last.mergedFrames || 1) + 1 };
-    } else {
-      out.push({ ...v, mergedFrames: 1 });
-    }
-  }
-  return out;
-}
-
 function alertSeverityBadgeMeta(confidence) {
   const n = Number(confidence);
   if (!Number.isFinite(n)) {
@@ -639,47 +588,6 @@ function alertSeverityBadgeMeta(confidence) {
   if (n >= 85) return { label: "خطورة عالية", cls: "border-red-500/45 bg-red-500/15 text-red-100" };
   if (n >= 55) return { label: "تحذير", cls: "border-amber-500/45 bg-amber-500/15 text-amber-100" };
   return { label: "منخفض", cls: "border-emerald-500/45 bg-emerald-500/15 text-emerald-100" };
-}
-
-function monitoringViolationChipMeta(typeOrKey) {
-  const canon = canonicalMonitoringViolationType(typeOrKey);
-  const ar = () => getViolationLabel(canon || typeOrKey);
-  if (canon === "no_gloves") {
-    return { label: `🔴 ${ar()}`, cls: "border-red-500/35 bg-red-500/15 text-red-200" };
-  }
-  if (canon === "no_mask") {
-    return { label: `🟠 ${ar()}`, cls: "border-orange-500/35 bg-orange-500/15 text-orange-200" };
-  }
-  if (canon === "no_headcover") {
-    return { label: `🟠 ${ar()}`, cls: "border-amber-500/35 bg-amber-500/15 text-amber-200" };
-  }
-  if (canon === "improper_uniform" || canon === "no_uniform") {
-    return { label: `🟠 ${ar()}`, cls: "border-yellow-500/35 bg-yellow-500/15 text-yellow-200" };
-  }
-  if (canon === "wet_floor") {
-    return { label: `🔴 ${ar()}`, cls: "border-red-500/35 bg-red-500/15 text-red-200" };
-  }
-  if (canon === "improper_trash_location" || canon === "trash_floor" || canon === "waste_area") {
-    return { label: `🟠 ${ar()}`, cls: "border-orange-500/35 bg-orange-500/15 text-orange-200" };
-  }
-  return { label: ar(), cls: "border-white/20 bg-white/5 text-slate-200" };
-}
-
-function monitoringViolationOrderIndex(typeOrKey) {
-  const canon = canonicalMonitoringViolationType(typeOrKey);
-  const idx = VIOLATION_REPORT_CATEGORY_ORDER.findIndex((c) => c.key === canon);
-  return idx >= 0 ? idx : 999;
-}
-
-function sortMonitoringViolationsReadable(list) {
-  const arr = Array.isArray(list) ? [...list] : [];
-  arr.sort((a, b) => {
-    const ai = monitoringViolationOrderIndex(a?.typeKey || a?.type);
-    const bi = monitoringViolationOrderIndex(b?.typeKey || b?.type);
-    if (ai !== bi) return ai - bi;
-    return Number(b?.confidence || 0) - Number(a?.confidence || 0);
-  });
-  return arr;
 }
 
 function computeViolationsReportStats(alerts) {
@@ -730,54 +638,6 @@ function computeViolationsReportStats(alerts) {
     topRepeated: { type: topRaw, count: topN, label: topLabel },
     latest: sortedLatest.slice(0, 15),
   };
-}
-
-function formatFileBytes(sizeBytes) {
-  const n = Number(sizeBytes);
-  if (!Number.isFinite(n) || n < 0) return "—";
-  if (n < 1024) return `${n} B`;
-  const kb = n / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  const mb = kb / 1024;
-  if (mb < 1024) return `${mb.toFixed(2)} MB`;
-  return `${(mb / 1024).toFixed(2)} GB`;
-}
-
-function formatVideoDuration(seconds) {
-  const total = Number(seconds);
-  if (!Number.isFinite(total) || total <= 0) return "غير متاح";
-  const s = Math.floor(total % 60);
-  const m = Math.floor((total / 60) % 60);
-  const h = Math.floor(total / 3600);
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-function makeVideoFrameTimes(durationSec, sampleCount = 12) {
-  const d = Number(durationSec);
-  if (!Number.isFinite(d) || d <= 0) return [];
-  const minSamples = d < 20 ? 16 : 12;
-  const targetCount = Math.max(minSamples, Math.min(36, Math.floor(sampleCount)));
-  const epsilon = Math.max(0.06, Math.min(0.35, d / 12));
-  const start = Math.max(0, epsilon);
-  const end = Math.max(start, d - epsilon);
-  const anchors = [start, d * 0.25, d * 0.5, d * 0.75, end];
-  const times = [];
-  for (const t of anchors) {
-    if (Number.isFinite(t)) times.push(Math.max(0, Math.min(d, t)));
-  }
-  if (targetCount <= 1 || end <= start) {
-    const center = Math.max(0, Math.min(d, d / 2));
-    times.push(center);
-  } else {
-    for (let i = 0; i < targetCount; i += 1) {
-      const ratio = i / (targetCount - 1);
-      const t = start + (end - start) * ratio;
-      times.push(Math.max(0, Math.min(d, t)));
-    }
-  }
-  const uniqueSorted = Array.from(new Set(times.map((t) => Number(t.toFixed(2))))).sort((a, b) => a - b);
-  return uniqueSorted;
 }
 
 function inferBadgesFromApi(item) {
@@ -898,7 +758,6 @@ function _deriveCheckState(key, source, result) {
   const supp          = (dbg.supplementary_checks || {})[key];
   const overallStatus = result.overall_status || "clean";
   const peopleCount   = typeof result.people_count === "number" ? result.people_count : (dbg.people_count ?? 0);
-  const ppeRawCount   = dbg.ppe_raw_count ?? null;
 
   // How many distinct persons are flagged for this check type
   const typeViolations = violations.filter((v) => v.type === key);
@@ -1009,14 +868,6 @@ function PpeStatusDashboard({ result, liveActive, liveTickBusy, manualLoading, z
   const peopleCount    = typeof result.people_count === "number" ? result.people_count : (dbg.people_count ?? 0);
   const analyzedAt     = result.frame_report?.analyzed_at || lastAnalyzedAt;
   const isFullyCompliant = overallStatus === "clean" && displayViolations.length === 0;
-
-  const overallDotCls = cannotVerify
-    ? "bg-amber-400"
-    : isFullyCompliant && peopleCount > 0
-    ? "bg-emerald-400"
-    : displayViolations.length > 0
-    ? "bg-red-400"
-    : "bg-slate-600";
 
   const complianceCls = cannotVerify
     ? "text-amber-400"
@@ -1396,7 +1247,6 @@ export default function Dashboard() {
     loadRestaurantCameraConfigs(MONITORING_ZONE_DEFINITIONS),
   );
   const [cameraSetupBusy, setCameraSetupBusy] = useState({ test: null, save: null });
-  const [cameraDetectBusy, setCameraDetectBusy] = useState({});
   const [detectResultModal, setDetectResultModal] = useState(null);
   const [adminSettings, setAdminSettings] = useState(ADMIN_SETTINGS_DEFAULTS);
   const [adminSettingsSaving, setAdminSettingsSaving] = useState(false);
@@ -1981,8 +1831,6 @@ export default function Dashboard() {
     () => computeViolationsReportStats(violationsReportRows),
     [violationsReportRows],
   );
-
-  const violationsLatestExpand = useExpandMoreList(violationsReportStats.latest.length, 3);
 
   const violationsSortedForExport = useMemo(() => {
     const list = Array.isArray(violationsReportRows) ? [...violationsReportRows] : [];
@@ -3084,7 +2932,7 @@ export default function Dashboard() {
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
       if (!blob) throw new Error("no_blob");
       const file = new File([blob], "device-camera.jpg", { type: "image/jpeg" });
-      const { ok, status, body } = await callAnalyzeFrameEndpoint(file, token, { analysisMode: "manual" });
+      const { status, body } = await callAnalyzeFrameEndpoint(file, token, { analysisMode: "manual" });
       if (handleProtectedAuthFailure(status, body?.detail)) return;
       if (!isMonitoringAnalyzeSuccess(status, body)) {
         const errDetail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : null;
@@ -3607,49 +3455,6 @@ export default function Dashboard() {
       resetLiveAnalysisState({ stopAuto: true });
     },
     [selectedMonitoringZoneId, setToast, resetLiveAnalysisState],
-  );
-
-  const handleDetectViolation = useCallback(
-    async (zoneId, violationType, imageFile) => {
-      const token = localStorage.getItem(ACCESS_TOKEN_KEY);
-      const busyKey = `${zoneId}:${violationType}`;
-      setCameraDetectBusy((b) => ({ ...b, [busyKey]: true }));
-      try {
-        const form = new FormData();
-        form.append("image", imageFile);
-        form.append("violation_type", violationType);
-        const defaults = mergeRestaurantCameraDefaults(MONITORING_ZONE_DEFINITIONS, restaurantCamConfigs);
-        const cfg = defaults[zoneId];
-        if (cfg?.cameraName) form.append("camera_name", cfg.cameraName);
-        const res = await fetch(AI_VIOLATIONS_DETECT_URL, {
-          method: "POST",
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          body: form,
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setToast({ type: "error", text: data?.detail ?? `خطأ في الكشف (${res.status})` });
-          return;
-        }
-        setDetectResultModal({ zoneId, violationType, ...data });
-        if (data.violation_detected) {
-          setToast({ type: "error", text: `تم الكشف عن مخالفة: ${data.status_message}` });
-          void loadSupervisorSummary();
-          void loadSupervisorAlerts();
-        } else {
-          setToast({ type: "success", text: data.status_message || "لم تُكتشف مخالفة." });
-        }
-      } catch (err) {
-        setToast({ type: "error", text: String(err?.message ?? err) });
-      } finally {
-        setCameraDetectBusy((b) => {
-          const next = { ...b };
-          delete next[busyKey];
-          return next;
-        });
-      }
-    },
-    [restaurantCamConfigs, setToast, loadSupervisorSummary, loadSupervisorAlerts],
   );
 
   useEffect(() => {

@@ -42,7 +42,7 @@
 - [x] JWT login works
 - [x] Token expiry: 24 hours (`ACCESS_TOKEN_EXPIRE_MINUTES=1440`)
 - [x] Session-expired message shown on 401 (instead of generic error)
-- [x] Role-based route guards in frontend (PrivateRoute, AdminRoute, SupervisorOrAdminRoute)
+- [x] Role-based route guards in frontend (PrivateRoute, AdminRoute)
 
 ### Backend
 - [x] All CRUD endpoints for dishes functional
@@ -116,7 +116,6 @@ needs_review=False
 ## Not Working / Incomplete
 
 ### Docker
-- `ai-service/Dockerfile` is a placeholder with no real content
 - No `docker-compose.yml` exists for the full stack
 - **Cannot deploy with Docker currently**
 

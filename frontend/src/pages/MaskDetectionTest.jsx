@@ -95,7 +95,7 @@ export default function MaskDetectionTest() {
       }
       setResult(res.data);
     },
-    [file, token]
+    [file, token, navigate]
   );
 
   // Draw boxes on canvas whenever result or image changes

@@ -136,8 +136,7 @@ App (local): `http://localhost:5173` — Vite proxies `/api` to the backend when
 
 ### Docker setup | دوكر
 
-The repo includes a **`docker-compose.yml`** stub and minimal **`Dockerfile`** placeholders under `frontend/`, `backend/`, and `ai-service/`.  
-Extend them for production (multi-stage builds, env injection, PostgreSQL service, TLS termination behind nginx/Caddy).
+Production-ready Dockerfiles are provided under **`backend/Dockerfile`** (FastAPI + ML deps) and **`frontend/Dockerfile`** (multi-stage Vite build → `serve` SPA host). Extend with PostgreSQL service and TLS termination (nginx/Caddy) when needed.
 
 ---
 
@@ -167,14 +166,13 @@ Additional deployment-oriented notes: [`docs/SECURITY_DEPLOYMENT_NOTES.md`](docs
 ```text
 ska-system/
 ├── frontend/           # React + Vite SPA
-├── backend/            # FastAPI app (app/)
-├── ai-service/         # Optional / extended AI workspace
-├── docs/               # Extra deployment & security notes
-├── screenshots/        # Portfolio images (see screenshots/README.md)
+├── backend/            # FastAPI app (app/) + ML weights (ml/models/)
+├── dataset/            # Training dataset layout (raw images excluded by .gitignore)
+├── docs/               # Deployment & security notes
+├── scripts/            # PPE training / dataset utilities
+├── screenshots/        # Portfolio images (optional)
+├── render.yaml         # Render Blueprint (backend + static frontend)
 ├── SECURITY_REPORT.md
-├── PROJECT_HANDOVER.md
-├── CURRENT_STATUS.md
-├── NEXT_STEPS.md
 └── README.md           # هذا الملف
 ```
 
@@ -187,9 +185,11 @@ ska-system/
 | [`frontend/README.md`](frontend/README.md) | Frontend setup, scripts, troubleshooting |
 | [`backend/README.md`](backend/README.md) | API modules, env vars, production notes |
 | [`SECURITY_REPORT.md`](SECURITY_REPORT.md) | Security baseline & checklist |
-| [`PROJECT_HANDOVER.md`](PROJECT_HANDOVER.md) | Handover context |
-| [`CURRENT_STATUS.md`](CURRENT_STATUS.md) | Current status |
-| [`NEXT_STEPS.md`](NEXT_STEPS.md) | Suggested next steps |
+| [`docs/PROJECT_HANDOVER.md`](docs/PROJECT_HANDOVER.md) | Handover context for new engineers |
+| [`docs/CURRENT_STATUS.md`](docs/CURRENT_STATUS.md) | Snapshot of feature status |
+| [`docs/NEXT_STEPS.md`](docs/NEXT_STEPS.md) | Recommended follow-up work |
+| [`docs/SECURITY_DEPLOYMENT_NOTES.md`](docs/SECURITY_DEPLOYMENT_NOTES.md) | Production deployment hardening notes |
+| [`docs/PRODUCTION_ACCURACY_REPORT.md`](docs/PRODUCTION_ACCURACY_REPORT.md) | AI accuracy validation report |
 
 ---
 

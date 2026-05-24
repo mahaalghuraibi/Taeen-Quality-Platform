@@ -132,14 +132,12 @@ ska-system/
 │       ├── components/
 │       │   ├── PrivateRoute.jsx
 │       │   ├── AdminRoute.jsx
-│       │   └── SupervisorOrAdminRoute.jsx
 │       └── utils/
 │           ├── datetime.js          # formatSaudiDateTime, formatSaudiDateLine, etc.
 │           ├── dishRecordsDisplay.js # computeDishStats, filterAndSortDishRecords
 │           ├── avatarInitials.js     # staffAvatarInitials, staffWelcomeDisplayName
 │           └── apiError.js          # dishSaveErrorMessage
 │
-└── ai-service/               # Placeholder (empty stub, not used)
     ├── Dockerfile
     └── classifiers/.gitkeep  # etc.
 ```
@@ -480,7 +478,7 @@ npm run build         # production build → dist/
 
 ## 13. Docker
 
-**Status: Placeholder only.** The `ai-service/Dockerfile` exists but contains no real configuration. There is no `docker-compose.yml` for the full stack. Running with Docker is not yet possible — only local bare-metal dev works.
+**Status: Production Dockerfiles ready.** `backend/Dockerfile` builds the FastAPI image (Python 3.11-slim + ML deps + `start.sh`). `frontend/Dockerfile` is a multi-stage Vite build served by `serve`. Use `render.yaml` for managed deploys; assemble a `docker-compose.yml` per environment when needed.
 
 ---
 
@@ -632,7 +630,7 @@ if (res.status === 401) {
 
 4. **SQLite in dev** — fine for local dev, but schema migrations are handled by `create_all()` on startup (no Alembic). Adding columns requires dropping and recreating the SQLite file.
 
-5. **Docker not implemented** — `ai-service/Dockerfile` is empty scaffolding. No `docker-compose.yml` exists. Production deployment requires manual setup.
+5. **Compose not pinned** — `backend/Dockerfile` and `frontend/Dockerfile` are production-ready, but no `docker-compose.yml` is checked in; production uses `render.yaml` (Render Blueprint).
 
 6. **PRODUCTION_AI_MODE in .env** — currently `true`. In prod, ensure this stays `true` to prevent fake-image abuse of Gemini API.
 
