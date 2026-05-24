@@ -37,8 +37,8 @@ services:
     runtime: static
     rootDir: frontend
     autoDeploy: true
-    # Do not ship dist/404.html — Render serves it for unknown paths with HTTP 404
-    # (index content + 404 status). SPA routing must use rewrite rules below.
+    # Post-build copies index.html into each route dir (see spa-static-paths.mjs).
+    # Do not ship dist/404.html — Render uses it with HTTP 404 for deep links.
     buildCommand: npm ci && npm run build && rm -f dist/404.html
     staticPublishPath: dist
     pullRequestPreviewsEnabled: true
