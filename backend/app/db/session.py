@@ -23,7 +23,18 @@ def get_db() -> Generator[Session, None, None]:
 
 def init_db() -> None:
     # Import models here to avoid circular imports during module initialization.
-    from app.models import admin_request, camera, dish_record, meal_type, monitoring_alert, tenant, user  # noqa: F401
+    from app.models import (  # noqa: F401
+        admin_request,
+        ai_inference_log,
+        audit_log,
+        camera,
+        dish_record,
+        meal_type,
+        monitoring_alert,
+        system_setting,
+        tenant,
+        user,
+    )
     from app.db.base import Base
 
     Base.metadata.create_all(bind=engine)

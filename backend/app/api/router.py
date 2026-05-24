@@ -2,7 +2,9 @@ from fastapi import APIRouter
 
 from app.api.routes.ai_violations import router as ai_violations_router
 from app.api.routes.ai_status import router as ai_status_router
+from app.api.routes.ai_inference_logs import router as ai_inference_logs_router
 from app.api.routes.admin_requests import router as admin_requests_router
+from app.api.routes.audit_logs import router as audit_logs_router
 from app.api.routes.mask_detection import router as mask_detection_router
 from app.api.routes.people_count import router as people_count_router
 from app.api.routes.admin_settings import router as admin_settings_router
@@ -44,3 +46,5 @@ api_router.include_router(mask_detection_router)
 api_router.include_router(people_count_router)
 api_router.include_router(ai_violations_router)
 api_router.include_router(ai_status_router)
+api_router.include_router(ai_inference_logs_router)
+api_router.include_router(audit_logs_router)

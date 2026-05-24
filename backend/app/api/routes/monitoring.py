@@ -10,6 +10,7 @@ from app.api.rbac import require_roles
 from app.core.config import settings
 from app.core.limiter import limiter
 from app.db.session import get_db
+from app.models.ai_inference_log import AIInferenceLog
 from app.models.camera import Camera
 from app.models.monitoring_alert import MonitoringAlert
 from app.models.user import User
@@ -310,6 +311,33 @@ async def analyze_frame(
             created_at=now,
         )
         db.add(row)
+        db.flush()  # populate alert id so we can link the AI inference log
+
+        # Persistent AI inference log (one row per confirmed alert; not per frame).
+        try:
+            db.add(
+                AIInferenceLog(
+                    tenant_id=current_user.tenant_id,
+                    branch_id=current_user.branch_id,
+                    camera_id=camera_id,
+                    camera_name=eff_name,
+                    model_name=str(payload.get("provider") or "yolo"),
+                    model_version=str(payload.get("model_version") or "v1.5"),
+                    violation_type=vtype,
+                    person_index=pin_int,
+                    confidence=vconf,
+                    smoothed_confidence=smoothed_conf,
+                    inference_latency_ms=None,
+                    priority=priority,
+                    outcome="confirmed",
+                    alert_id=row.id,
+                    notes=None,
+                    created_at=now,
+                )
+            )
+        except Exception:
+            logger.exception("ai_inference_log write skipped (alert_id=%s)", row.id)
+
         alerts_created += 1
 
     if cam is not None:
