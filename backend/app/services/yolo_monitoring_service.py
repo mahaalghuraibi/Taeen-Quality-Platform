@@ -434,6 +434,14 @@ def _load_yolo(model_path: str) -> Any:
     if model_path in _YOLO_MODEL_CACHE:
         return _YOLO_MODEL_CACHE[model_path]
 
+    # Local import — the health monitor must not break the YOLO path if missing.
+    try:
+        from app.services.ai_health_service import ai_health  # noqa: PLC0415
+    except Exception:  # pragma: no cover — defensive
+        ai_health = None  # type: ignore[assignment]
+
+    model_name = Path(model_path).name
+
     with _YOLO_LOAD_LOCK:
         if model_path in _YOLO_MODEL_CACHE:
             return _YOLO_MODEL_CACHE[model_path]
@@ -441,10 +449,10 @@ def _load_yolo(model_path: str) -> Any:
         try:
             from ultralytics import YOLO
         except ImportError:
-            raise ValueError(
-                "مكتبة ultralytics غير مثبتة. "
-                "في مجلد backend نفّذ: pip install ultralytics"
-            ) from None
+            err = "مكتبة ultralytics غير مثبتة. في مجلد backend نفّذ: pip install ultralytics"
+            if ai_health is not None:
+                ai_health.record_model_load_failed(name=model_name, path=model_path, error=err)
+            raise ValueError(err) from None
 
         try:
             logger.info("YOLO model loading: path=%s", model_path)
@@ -458,17 +466,31 @@ def _load_yolo(model_path: str) -> Any:
                     _LIBC_MALLOC_TRIM(0)
                 except Exception:
                     pass
+            try:
+                size_bytes = Path(model_path).stat().st_size
+            except OSError:
+                size_bytes = None
+            if ai_health is not None:
+                ai_health.record_model_loaded(
+                    name=model_name, path=model_path, size_bytes=size_bytes,
+                )
             if model_path not in _YOLO_LOADED_PATHS:
                 _YOLO_LOADED_PATHS.add(model_path)
                 logger.info("YOLO model loaded successfully path=%s device=cpu", model_path)
             return model
         except FileNotFoundError:
-            raise ValueError(
+            err = (
                 f"ملف نموذج YOLO غير موجود: {model_path}. "
                 "تحقق من مسار الملف في backend/.env"
-            ) from None
+            )
+            if ai_health is not None:
+                ai_health.record_model_load_failed(name=model_name, path=model_path, error=err)
+            raise ValueError(err) from None
         except Exception as exc:
-            raise ValueError(f"فشل تحميل نموذج YOLO: {exc}") from exc
+            err = f"فشل تحميل نموذج YOLO: {exc}"
+            if ai_health is not None:
+                ai_health.record_model_load_failed(name=model_name, path=model_path, error=err)
+            raise ValueError(err) from exc
 
 
 def _get_yolo_model() -> Any:
@@ -1661,24 +1683,46 @@ def analyze_frame_yolo(
     if not settings.YOLO_ENABLED:
         raise ValueError("YOLO is disabled (YOLO_ENABLED=false).")
 
+    # Local import keeps the AI-health hook decoupled from the YOLO path on cold start.
+    from app.services.ai_health_service import ai_health  # noqa: PLC0415
+
+    _cam_key = (camera_name or "—").strip() or "—"
     _t0 = time.monotonic()
-    with _yolo_analysis_slot(wait=wait_for_slot):
-        _t_slot = time.monotonic()
-        logger.info(
-            "YOLO slot acquired camera=%s wait_mode=%s slot_wait=%.2fs",
-            camera_name or "—",
-            "blocking" if wait_for_slot else "nonblocking",
-            _t_slot - _t0,
-        )
-        payload = _analyze_frame_yolo_core(image_bytes, camera_name, location)
-        _elapsed = time.monotonic() - _t_slot
-        logger.info(
-            "YOLO inference finished camera=%s inference_time=%.2fs total_time=%.2fs",
-            camera_name or "—",
-            _elapsed,
-            time.monotonic() - _t0,
-        )
-        return payload
+    _t_slot: float | None = None
+    try:
+        with _yolo_analysis_slot(wait=wait_for_slot):
+            _t_slot = time.monotonic()
+            slot_wait_ms = (_t_slot - _t0) * 1000.0
+            logger.info(
+                "YOLO slot acquired camera=%s wait_mode=%s slot_wait=%.2fs",
+                camera_name or "—",
+                "blocking" if wait_for_slot else "nonblocking",
+                _t_slot - _t0,
+            )
+            payload = _analyze_frame_yolo_core(image_bytes, camera_name, location)
+            _elapsed = time.monotonic() - _t_slot
+            ai_health.record_inference(
+                camera_key=_cam_key,
+                latency_ms=_elapsed * 1000.0,
+                slot_wait_ms=slot_wait_ms,
+            )
+            logger.info(
+                "YOLO inference finished camera=%s inference_time=%.2fs total_time=%.2fs",
+                camera_name or "—",
+                _elapsed,
+                time.monotonic() - _t0,
+            )
+            return payload
+    except ValueError as exc:
+        # Live-mode "busy" slot rejection → dropped frame; everything else → runtime error.
+        if str(exc) == YOLO_BUSY_MESSAGE:
+            ai_health.record_dropped(camera_key=_cam_key, reason="busy")
+        else:
+            ai_health.record_error(camera_key=_cam_key)
+        raise
+    except Exception:
+        ai_health.record_error(camera_key=_cam_key)
+        raise
 
 
 def _analyze_frame_yolo_core(

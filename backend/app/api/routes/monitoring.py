@@ -246,17 +246,21 @@ async def analyze_frame(
         if dedupe_key in inserted_keys:
             continue
 
-        streak, confirmed = violation_tracker.register(
+        info = violation_tracker.register_detailed(
             tenant_id=current_user.tenant_id,
             camera_id=camera_id,
             vtype=vtype,
             person_index=pin_int,
             confidence=vconf,
         )
+        streak = info["streak"]
+        confirmed = info["confirmed"]
+        smoothed_conf = int(round(info["smoothed_confidence"]))
         if not confirmed:
             logger.debug(
-                "audit streak_building type=%s conf=%d streak=%d/%d camera=%s person=%s",
-                vtype, vconf, streak, violation_tracker.streak_required, eff_name, pin_int,
+                "audit streak_building type=%s conf=%d smoothed=%d streak=%d/%d reason=%s camera=%s person=%s",
+                vtype, vconf, smoothed_conf, streak,
+                violation_tracker.streak_required, info["reason"], eff_name, pin_int,
             )
             continue
 
@@ -275,9 +279,19 @@ async def analyze_frame(
             continue
 
         inserted_keys.add(dedupe_key)
+        priority = str(info.get("priority") or "medium")
+        offender_count = int(info.get("offender_count") or 0)
+        # Propagate smart-priority + offender info onto the live response payload
+        # so the UI can render colour, badge, and "repeated offender" hint.
+        v["severity"] = priority
+        v["priority"] = priority
+        v["smoothed_confidence"] = smoothed_conf
+        v["offender_count"] = offender_count
         logger.info(
-            "audit ALERT_CREATED type=%s conf=%d streak=%d camera=%s location=%s person=%s",
-            vtype, vconf, streak, eff_name, eff_location, pin_int,
+            "audit ALERT_CREATED type=%s conf=%d smoothed=%d streak=%d priority=%s "
+            "offender_count=%d camera=%s location=%s person=%s",
+            vtype, vconf, smoothed_conf, streak, priority, offender_count,
+            eff_name, eff_location, pin_int,
         )
         row = MonitoringAlert(
             tenant_id=current_user.tenant_id,
@@ -288,7 +302,8 @@ async def analyze_frame(
             location=eff_location,
             violation_type=vtype,
             label_ar=str(v.get("label_ar", "")).strip() or vtype,
-            confidence=vconf,
+            # Persist the smoothed confidence (less flicker, more stable historical reporting).
+            confidence=max(vconf, smoothed_conf),
             reason_ar=str(v.get("reason_ar", "")).strip() or "—",
             image_data_url=snapshot,
             status="open",
@@ -326,6 +341,9 @@ async def analyze_frame(
                 severity=str(v.get("severity", "medium") or "medium"),
                 category=str(v.get("category", "PPE") or "PPE"),
                 suggested_action=str(v.get("suggested_action", "") or ""),
+                smoothed_confidence=int(v.get("smoothed_confidence", 0) or 0),
+                offender_count=int(v.get("offender_count", 0) or 0),
+                priority=str(v.get("priority") or v.get("severity") or "low"),
             )
             for v in (payload.get("violations") or [])
             if isinstance(v, dict)

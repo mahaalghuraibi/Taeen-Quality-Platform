@@ -21,9 +21,12 @@ class MonitoringViolationOut(BaseModel):
     status: str = "new"
     person_index: int | None = None
     alias_of: str | None = None
-    severity: str = "medium"        # low | medium | high
+    severity: str = "medium"        # low | medium | high | critical
     category: str = "PPE"           # PPE | hygiene | waste | cleanliness | staff_behavior | food_safety
     suggested_action: str = ""
+    smoothed_confidence: int = Field(ge=0, le=100, default=0)
+    offender_count: int = Field(ge=0, default=0)
+    priority: str = "low"           # low | medium | high | critical
 
 
 class MonitoringAnalyzeResponse(BaseModel):

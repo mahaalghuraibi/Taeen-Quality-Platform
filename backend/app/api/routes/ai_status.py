@@ -1,9 +1,11 @@
 """
-AI model status endpoint.
+AI model status + health endpoints.
+
 Reports:
   - Monitoring YOLO model (keremberk_ppe.pt / YOLO_MODEL_PATH) — covers mask, gloves, headcover, uniform.
   - Person detector model (yolov8n.pt / PERSON_MODEL_PATH) — required for PPE geometric validation.
   - Per-image upload violation models (glove_best.pt, hairnet_best.pt) — used by /violations/detect endpoint.
+  - Live runtime health: FPS, inference latency, dropped frames, model load state, tracker metrics.
 """
 from pathlib import Path
 
@@ -13,6 +15,8 @@ from app.api.deps import get_current_user
 from app.api.rbac import require_roles
 from app.core.config import settings
 from app.models.user import User
+from app.services.ai_health_service import ai_health
+from app.services.violation_tracker import default_tracker as _violation_tracker
 
 router = APIRouter(prefix="/ai", tags=["ai-status"])
 
@@ -137,3 +141,27 @@ def get_ai_status(current_user: User = Depends(get_current_user)) -> dict:
         "yolo_enabled": bool(getattr(settings, "YOLO_ENABLED", True)),
         "yolo_use_person_detector": yolo_use_person,
     }
+
+
+@router.get(
+    "/health",
+    dependencies=[Depends(require_roles("supervisor", "admin"))],
+    summary="Live AI runtime health (FPS, latency, dropped frames, model state, tracker metrics)",
+)
+def get_ai_health(current_user: User = Depends(get_current_user)) -> dict:
+    """Return real-time observability for the YOLO monitoring pipeline.
+
+    Status semantics:
+      - "healthy"   → latency p95 < 1.5 s, drop ratio < 15%, models loaded.
+      - "degraded"  → latency p95 ≥ 1.5 s OR drop ratio ≥ 15%.
+      - "unhealthy" → latency p95 ≥ 4 s OR drop ratio ≥ 35% OR a required model failed to load.
+    """
+    snapshot = ai_health.snapshot()
+    snapshot["tracker"] = {
+        "streak_required": _violation_tracker.streak_required,
+        "cooldown_seconds": _violation_tracker.cooldown_seconds,
+        "offender_window_seconds": _violation_tracker.offender_window_seconds,
+        "metrics": _violation_tracker.metrics_snapshot(),
+    }
+    snapshot["yolo_enabled"] = bool(getattr(settings, "YOLO_ENABLED", True))
+    return snapshot
