@@ -386,6 +386,7 @@ function protectedApiErrorText(status, detail) {
 const SUPERVISOR_ALERTS_URL = apiUrl("/api/v1/supervisor/alerts");
 const SUPERVISOR_ALERT_STATUS_URL = (id) => apiUrl(`/api/v1/supervisor/alerts/${id}/status`);
 const AI_STATUS_URL = apiUrl("/api/v1/ai/status");
+const AI_WARMUP_URL = apiUrl("/api/v1/ai/warmup");
 const MONITORING_ANALYZE_URL = apiUrl("/api/v1/monitoring/analyze-frame");
 const DISH_REVIEW_UPDATED_EVENT = "ska:dish-review-updated";
 const SUPERVISOR_SUMMARY_URL = apiUrl("/api/v1/supervisor/summary");
@@ -1192,6 +1193,9 @@ export default function Dashboard() {
   const [evidenceAlertId, setEvidenceAlertId] = useState(null);
   const [aiStatus, setAiStatus] = useState(null);
   const [aiStatusLoading, setAiStatusLoading] = useState(false);
+  /** AI warmup state: "idle" | "loading" | "ready" | "failed" */
+  const [aiWarmupStatus, setAiWarmupStatus] = useState("idle");
+  const aiWarmupPollRef = useRef(null);
   const [alertUnderReviewLoadingId, setAlertUnderReviewLoadingId] = useState(null);
   const [newCameraForm, setNewCameraForm] = useState({
     name: "",
@@ -2431,6 +2435,50 @@ export default function Dashboard() {
     }
   }, [getAccessToken, handleProtectedAuthFailure, role]);
 
+  /**
+   * Trigger background YOLO warmup so the first analyze-frame is fast
+   * (avoids the 60–180s cold-start timeout the user was seeing).
+   */
+  const triggerAiWarmup = useCallback(async () => {
+    if (!(role === "supervisor" || role === "admin")) return;
+    const token = getAccessToken();
+    if (!token) return;
+    try {
+      const res = await fetchWithTimeout(
+        AI_WARMUP_URL,
+        { method: "POST", headers: { Authorization: `Bearer ${token}` } },
+        DEFAULT_FETCH_TIMEOUT_MS,
+      );
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && typeof body?.status === "string") {
+        setAiWarmupStatus(body.status);
+      }
+    } catch {
+      /* warmup is best-effort — first analyze will still trigger lazy load */
+    }
+  }, [getAccessToken, role]);
+
+  const pollAiWarmup = useCallback(async () => {
+    if (!(role === "supervisor" || role === "admin")) return null;
+    const token = getAccessToken();
+    if (!token) return null;
+    try {
+      const res = await fetchWithTimeout(
+        AI_WARMUP_URL,
+        { headers: { Authorization: `Bearer ${token}` } },
+        DEFAULT_FETCH_TIMEOUT_MS,
+      );
+      const body = await res.json().catch(() => null);
+      if (res.ok && body?.status) {
+        setAiWarmupStatus(body.status);
+        return body.status;
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }, [getAccessToken, role]);
+
   const markAlertUnderReview = useCallback(
     async (alertId) => {
       const token = getAccessToken();
@@ -2529,7 +2577,37 @@ export default function Dashboard() {
   useEffect(() => {
     if (!(role === "supervisor" || role === "admin")) return;
     void loadAiStatus();
-  }, [role, loadAiStatus]);
+    // Kick off background YOLO warmup so the first analyze-frame is fast.
+    void triggerAiWarmup();
+  }, [role, loadAiStatus, triggerAiWarmup]);
+
+  // Poll warmup endpoint while loading, stop once ready or failed.
+  useEffect(() => {
+    if (!(role === "supervisor" || role === "admin")) return undefined;
+    if (aiWarmupStatus !== "loading") {
+      if (aiWarmupPollRef.current != null) {
+        clearInterval(aiWarmupPollRef.current);
+        aiWarmupPollRef.current = null;
+      }
+      return undefined;
+    }
+    const id = window.setInterval(() => {
+      void pollAiWarmup();
+    }, 5000);
+    aiWarmupPollRef.current = id;
+    return () => {
+      clearInterval(id);
+      aiWarmupPollRef.current = null;
+    };
+  }, [role, aiWarmupStatus, pollAiWarmup]);
+
+  // When warmup transitions to ready, refresh AI status and clear stale "loading model" error.
+  useEffect(() => {
+    if (aiWarmupStatus === "ready") {
+      void loadAiStatus();
+      setLiveAnalysisError("");
+    }
+  }, [aiWarmupStatus, loadAiStatus]);
 
   useEffect(() => {
     if (!(role === "supervisor" || role === "admin")) {
@@ -2733,6 +2811,21 @@ export default function Dashboard() {
       }
       if (!isMonitoringAnalyzeSuccess(status, body)) {
         const errDetail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : null;
+        // 503 with "نموذج" / "تحميل" or our timeout sentinel → cold-start, not a hard failure.
+        const looksLikeColdStart =
+          status === 503 ||
+          (typeof errDetail === "string" &&
+            (errDetail.includes("نموذج") ||
+              errDetail.includes("تحميل") ||
+              errDetail.includes("مهلة")));
+        if (looksLikeColdStart) {
+          setAiWarmupStatus("loading");
+          void triggerAiWarmup();
+          setLiveAnalysisError(
+            "نموذج التحليل يُحمَّل لأول مرة بعد إقلاع الخادم — قد يستغرق دقيقة. التحليل سيستأنف تلقائياً.",
+          );
+          return;
+        }
         const msg = errDetail || `فشل التحليل التلقائي (${status || "—"}).`;
         console.log("[YOLO Live] analysis failed:", msg);
         setLiveAnalysisError(msg);
@@ -2768,8 +2861,17 @@ export default function Dashboard() {
       void loadSupervisorSummary();
     } catch (err) {
       if (gen === liveGenRef.current) {
-        const msg = formatMonitoringFetchError(err, "تعذر إكمال التحليل التلقائي.");
-        setLiveAnalysisError(msg);
+        // Cold-start: model still downloading. Trigger warmup poll, show friendly state.
+        if (err?.code === "TIMEOUT") {
+          setAiWarmupStatus("loading");
+          void triggerAiWarmup();
+          setLiveAnalysisError(
+            "نموذج التحليل يُحمَّل لأول مرة بعد إقلاع الخادم — قد يستغرق دقيقة. التحليل سيستأنف تلقائياً.",
+          );
+        } else {
+          const msg = formatMonitoringFetchError(err, "تعذر إكمال التحليل التلقائي.");
+          setLiveAnalysisError(msg);
+        }
         console.error("[Monitoring] live tick failed:", MONITORING_ANALYZE_URL, err);
       }
     } finally {
@@ -2795,6 +2897,7 @@ export default function Dashboard() {
     handleProtectedAuthFailure,
     loadSupervisorAlerts,
     loadSupervisorSummary,
+    triggerAiWarmup,
   ]);
 
   // Keep tickLiveRef in sync so timers always call the freshest version.
@@ -2862,6 +2965,19 @@ export default function Dashboard() {
       if (handleProtectedAuthFailure(status, body?.detail)) return;
       if (!isMonitoringAnalyzeSuccess(status, body)) {
         const errDetail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : null;
+        const looksLikeColdStart =
+          status === 503 ||
+          (typeof errDetail === "string" &&
+            (errDetail.includes("نموذج") || errDetail.includes("تحميل") || errDetail.includes("مهلة")));
+        if (looksLikeColdStart) {
+          setAiWarmupStatus("loading");
+          void triggerAiWarmup();
+          setToast({
+            type: "info",
+            text: "نموذج التحليل يُحمَّل لأول مرة بعد إقلاع الخادم — حاول مرة أخرى بعد دقيقة.",
+          });
+          return;
+        }
         setToast({ type: "error", text: errDetail || "فشل تحليل اللقطة." });
         return;
       }
@@ -2876,10 +2992,19 @@ export default function Dashboard() {
       await loadSupervisorSummary();
     } catch (err) {
       console.error("[Monitoring] manual webcam frame failed:", MONITORING_ANALYZE_URL, err);
-      setToast({
-        type: "error",
-        text: formatMonitoringFetchError(err, "تعذر التقاط أو تحليل الصورة من الكاميرا."),
-      });
+      if (err?.code === "TIMEOUT") {
+        setAiWarmupStatus("loading");
+        void triggerAiWarmup();
+        setToast({
+          type: "info",
+          text: "نموذج التحليل يُحمَّل لأول مرة بعد إقلاع الخادم — حاول مرة أخرى بعد دقيقة.",
+        });
+      } else {
+        setToast({
+          type: "error",
+          text: formatMonitoringFetchError(err, "تعذر التقاط أو تحليل الصورة من الكاميرا."),
+        });
+      }
     } finally {
       setMonitoringWebcamBusy(false);
       setMonitoringAnalyzeLoading(false);
@@ -4197,6 +4322,16 @@ export default function Dashboard() {
                     ) : null}
                   </p>
                 )}
+                {aiWarmupStatus === "loading" ? (
+                  <p className="mt-3 inline-flex items-center gap-2 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-100">
+                    <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+                    جاري تحميل نموذج التحليل لأول مرة — قد يستغرق دقيقة. التحليل التلقائي سيستأنف فور انتهاء التحميل.
+                  </p>
+                ) : aiWarmupStatus === "failed" ? (
+                  <p className="mt-3 inline-flex items-center gap-2 rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-1.5 text-[11px] text-red-200">
+                    تعذر تحميل نموذج التحليل — يرجى تحديث الصفحة أو التواصل مع المسؤول.
+                  </p>
+                ) : null}
               </div>
 
               <div className="grid gap-4 border-b border-white/10 bg-[#030712] px-4 py-5 sm:grid-cols-2 sm:px-5 lg:grid-cols-3">

@@ -6,10 +6,14 @@ Reports:
   - Person detector model (yolov8n.pt / PERSON_MODEL_PATH) — required for PPE geometric validation.
   - Per-image upload violation models (glove_best.pt, hairnet_best.pt) — used by /violations/detect endpoint.
   - Live runtime health: FPS, inference latency, dropped frames, model load state, tracker metrics.
+  - Background warmup: trigger first YOLO model load before user clicks "بدء المراقبة".
 """
+import logging
+import threading
+import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 
 from app.api.deps import get_current_user
 from app.api.rbac import require_roles
@@ -18,7 +22,58 @@ from app.models.user import User
 from app.services.ai_health_service import ai_health
 from app.services.violation_tracker import default_tracker as _violation_tracker
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/ai", tags=["ai-status"])
+
+# ── Background warmup state (process-local, single warmup at a time) ──────────
+_WARMUP_LOCK = threading.Lock()
+_WARMUP_STATE: dict = {
+    "status": "idle",        # idle | loading | ready | failed
+    "started_at": None,
+    "finished_at": None,
+    "error": None,
+    "model_path": None,
+}
+
+
+def _set_warmup_state(**fields) -> None:
+    with _WARMUP_LOCK:
+        _WARMUP_STATE.update(fields)
+
+
+def _warmup_yolo_background() -> None:
+    """Run inside a worker thread — load YOLO once so the first analyze-frame is fast."""
+    started = time.time()
+    _set_warmup_state(status="loading", started_at=started, finished_at=None, error=None)
+    try:
+        # Local imports keep import time of this module fast (used by readiness probes too).
+        from app.services.yolo_model_resolver import resolve_yolo_model_path  # type: ignore
+        from app.services.yolo_monitoring_service import _load_yolo  # type: ignore
+
+        model_path = resolve_yolo_model_path(allow_download=True)
+        if not model_path:
+            _set_warmup_state(
+                status="failed",
+                finished_at=time.time(),
+                error="نموذج YOLO غير متوفر — تحقق من إعدادات النشر.",
+            )
+            return
+        _load_yolo(model_path)  # populates the cache + ai_health model state
+        _set_warmup_state(
+            status="ready",
+            finished_at=time.time(),
+            model_path=model_path,
+            error=None,
+        )
+        logger.info("AI warmup complete in %.1fs path=%s", time.time() - started, model_path)
+    except Exception as exc:  # noqa: BLE001 — surface details to operators
+        logger.exception("AI warmup failed")
+        _set_warmup_state(
+            status="failed",
+            finished_at=time.time(),
+            error=f"{type(exc).__name__}: {exc}"[:300],
+        )
 
 _MODELS_DIR = Path(__file__).resolve().parents[2] / "ml" / "models"
 
@@ -140,6 +195,63 @@ def get_ai_status(current_user: User = Depends(get_current_user)) -> dict:
         "person_detector_ready": person_configured and yolo_use_person,
         "yolo_enabled": bool(getattr(settings, "YOLO_ENABLED", True)),
         "yolo_use_person_detector": yolo_use_person,
+    }
+
+
+@router.post(
+    "/warmup",
+    dependencies=[Depends(require_roles("supervisor", "admin"))],
+    summary="Trigger background YOLO warmup so the first analyze-frame is fast",
+)
+def post_ai_warmup(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Start a background warmup if one is not already running or completed."""
+    _ = current_user  # auth gate only
+    with _WARMUP_LOCK:
+        st = dict(_WARMUP_STATE)
+    if st["status"] == "loading":
+        return {"ok": True, "started": False, "status": "loading", "message": "جاري التحميل بالفعل."}
+    if st["status"] == "ready":
+        return {"ok": True, "started": False, "status": "ready", "message": "النموذج جاهز."}
+    background_tasks.add_task(_warmup_yolo_background)
+    return {"ok": True, "started": True, "status": "loading", "message": "بدأ تحميل النموذج في الخلفية."}
+
+
+@router.get(
+    "/warmup",
+    dependencies=[Depends(require_roles("supervisor", "admin"))],
+    summary="Get current YOLO warmup state (idle/loading/ready/failed)",
+)
+def get_ai_warmup(current_user: User = Depends(get_current_user)) -> dict:
+    """Lightweight, non-blocking — safe to poll from the dashboard every 5s."""
+    _ = current_user
+    with _WARMUP_LOCK:
+        st = dict(_WARMUP_STATE)
+    duration_s = None
+    if st.get("started_at"):
+        end = st.get("finished_at") or time.time()
+        duration_s = round(end - float(st["started_at"]), 1)
+
+    # Cross-check with ai_health for the actual loaded model state.
+    try:
+        snap = ai_health.snapshot()
+        any_loaded = any(m.get("loaded") for m in snap.get("models") or [])
+    except Exception:  # pragma: no cover
+        any_loaded = False
+
+    status = st["status"]
+    if status == "idle" and any_loaded:
+        status = "ready"
+
+    return {
+        "status": status,
+        "duration_seconds": duration_s,
+        "started_at": st.get("started_at"),
+        "finished_at": st.get("finished_at"),
+        "model_path": st.get("model_path"),
+        "error": st.get("error"),
     }
 
 
