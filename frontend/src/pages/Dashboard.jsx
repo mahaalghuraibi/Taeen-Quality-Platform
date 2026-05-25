@@ -49,6 +49,12 @@ import {
   isMonitoringSkippedResponse,
   LIVE_ANALYSIS_GAP_MS,
 } from "../utils/monitoringApi.js";
+import {
+  API_STATUS,
+  apiStatusLabelAr,
+  probeApiHealth,
+  supervisorDataLoadErrorAr,
+} from "../utils/apiHealth.js";
 import { wakeApiBeforeAuth, markApiAlive } from "../utils/wakeApi.js";
 import {
   STAFF_SECTION_IDS,
@@ -1180,7 +1186,7 @@ export default function Dashboard() {
   const [alertsLoading, setAlertsLoading] = useState(false);
   const [alertsError, setAlertsError] = useState("");
   /** null = unknown, true/false from lightweight GET /health or /. */
-  const [apiReachable, setApiReachable] = useState(null);
+  const [apiConnectionStatus, setApiConnectionStatus] = useState(API_STATUS.CHECKING);
   const [alertStatusFilter, setAlertStatusFilter] = useState("all");
   const [alertTypeFilter, setAlertTypeFilter] = useState("all");
   const [evidenceAlertId, setEvidenceAlertId] = useState(null);
@@ -1752,13 +1758,16 @@ export default function Dashboard() {
         ? `${Math.round(Number(supervisorSummary.compliance_rate))}%`
         : "—";
 
-  const monitoringHealthLine = alertsLoading || apiReachable === null
-    ? "جاري التحقق…"
-    : apiReachable === false
-      ? "الخادم لا يستجيب"
-      : alertsError
-        ? "تعذر تحميل التنبيهات"
-        : "الاتصال بالخادم سليم";
+  const monitoringHealthLine =
+    apiConnectionStatus === API_STATUS.CHECKING || alertsLoading
+      ? apiStatusLabelAr(API_STATUS.CHECKING)
+      : apiConnectionStatus === API_STATUS.OFFLINE
+        ? apiStatusLabelAr(API_STATUS.OFFLINE)
+        : apiConnectionStatus === API_STATUS.WAKING
+          ? apiStatusLabelAr(API_STATUS.WAKING)
+          : alertsError
+            ? alertsError
+            : apiStatusLabelAr(API_STATUS.ONLINE);
   const monitoringLiveLine =
     monitoringWebcamOn && monitoringLiveAutoOn ? "تحليل لقطات نشط" : "بدون تحليل تلقائي فوري";
 
@@ -2303,29 +2312,50 @@ export default function Dashboard() {
   const loadSupervisorCameras = useCallback(async () => {
     if (!(role === "supervisor" || role === "admin")) return;
     const token = getAccessToken();
-    if (!token) return;
+    if (!token) {
+      setCameraCardsError("يرجى تسجيل الدخول لتحميل بيانات الكاميرات.");
+      return;
+    }
     setCameraCardsLoading(true);
     setCameraCardsError("");
     try {
-      const res = await fetch(SUPERVISOR_CAMERAS_URL, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetchWithTimeout(
+        SUPERVISOR_CAMERAS_URL,
+        { headers: { Authorization: `Bearer ${token}` } },
+        DEFAULT_FETCH_TIMEOUT_MS,
+      );
       const body = await res.json().catch(() => []);
       if (handleProtectedAuthFailure(res.status, body?.detail)) {
         setCameraCards([]);
         return;
       }
       if (!res.ok || !Array.isArray(body)) {
-        setCameraCardsError("تعذر تحميل بيانات الكاميرات.");
+        setCameraCardsError(
+          supervisorDataLoadErrorAr("بيانات الكاميرات", {
+            status: res.status,
+            apiStatus: apiConnectionStatus,
+            detail: body?.detail,
+          }) || "تعذر تحميل بيانات الكاميرات.",
+        );
         setCameraCards([]);
         return;
       }
+      markApiAlive();
+      setApiConnectionStatus(API_STATUS.ONLINE);
       setCameraCards(body);
-    } catch {
+    } catch (err) {
       setCameraCards([]);
-      setCameraCardsError("تعذر تحميل بيانات الكاميرات.");
+      const msg = supervisorDataLoadErrorAr("بيانات الكاميرات", {
+        err,
+        apiStatus: apiConnectionStatus,
+      });
+      setCameraCardsError(msg || "تعذر تحميل بيانات الكاميرات.");
+      if (err?.code === "TIMEOUT") setApiConnectionStatus(API_STATUS.WAKING);
+      else if (err instanceof TypeError) setApiConnectionStatus(API_STATUS.OFFLINE);
     } finally {
       setCameraCardsLoading(false);
     }
-  }, [getAccessToken, handleProtectedAuthFailure, role]);
+  }, [apiConnectionStatus, getAccessToken, handleProtectedAuthFailure, role]);
 
   const loadSupervisorAlerts = useCallback(async () => {
     if (!(role === "supervisor" || role === "admin")) return;
@@ -2345,18 +2375,29 @@ export default function Dashboard() {
         return;
       }
       if (!res.ok || !Array.isArray(body)) {
-        setAlertsError("تعذر تحميل التنبيهات.");
+        setAlertsError(
+          supervisorDataLoadErrorAr("التنبيهات", {
+            status: res.status,
+            apiStatus: apiConnectionStatus,
+            detail: body?.detail,
+          }) || "تعذر تحميل التنبيهات.",
+        );
         setAlertsList([]);
         return;
       }
+      markApiAlive();
+      setApiConnectionStatus(API_STATUS.ONLINE);
       setAlertsList(body);
-    } catch {
-      setAlertsError("تعذر تحميل التنبيهات.");
+    } catch (err) {
+      const msg = supervisorDataLoadErrorAr("التنبيهات", { err, apiStatus: apiConnectionStatus });
+      setAlertsError(msg || "تعذر تحميل التنبيهات.");
       setAlertsList([]);
+      if (err?.code === "TIMEOUT") setApiConnectionStatus(API_STATUS.WAKING);
+      else if (err instanceof TypeError) setApiConnectionStatus(API_STATUS.OFFLINE);
     } finally {
       setAlertsLoading(false);
     }
-  }, [getAccessToken, handleProtectedAuthFailure, role]);
+  }, [apiConnectionStatus, getAccessToken, handleProtectedAuthFailure, role]);
 
   const loadAiStatus = useCallback(async () => {
     if (!(role === "supervisor" || role === "admin")) return;
@@ -2370,15 +2411,25 @@ export default function Dashboard() {
         DEFAULT_FETCH_TIMEOUT_MS,
       );
       const body = await res.json().catch(() => null);
-      if (res.ok && body && Array.isArray(body.models)) {
-        setAiStatus(body);
+      if (handleProtectedAuthFailure(res.status, body?.detail)) {
+        setAiStatus(null);
+        return;
       }
-    } catch {
-      /* non-critical — silently ignore */
+      if (res.ok && body && Array.isArray(body.models)) {
+        markApiAlive();
+        setApiConnectionStatus(API_STATUS.ONLINE);
+        setAiStatus(body);
+      } else if (!res.ok) {
+        setAiStatus(null);
+      }
+    } catch (err) {
+      setAiStatus(null);
+      if (err?.code === "TIMEOUT") setApiConnectionStatus(API_STATUS.WAKING);
+      else if (err instanceof TypeError) setApiConnectionStatus(API_STATUS.OFFLINE);
     } finally {
       setAiStatusLoading(false);
     }
-  }, [getAccessToken, role]);
+  }, [getAccessToken, handleProtectedAuthFailure, role]);
 
   const markAlertUnderReview = useCallback(
     async (alertId) => {
@@ -2482,13 +2533,15 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!(role === "supervisor" || role === "admin")) {
-      setApiReachable(null);
+      setApiConnectionStatus(API_STATUS.CHECKING);
       return undefined;
     }
     let cancelled = false;
+    setApiConnectionStatus(API_STATUS.CHECKING);
     (async () => {
-      const ok = await wakeApiBeforeAuth();
-      if (!cancelled) setApiReachable(ok);
+      const result = await probeApiHealth();
+      if (cancelled) return;
+      setApiConnectionStatus(result.status);
     })();
     return () => {
       cancelled = true;
@@ -2603,9 +2656,8 @@ export default function Dashboard() {
   // Shared fetch helper used by image upload, video frames, and live 1 Hz monitoring.
   const callAnalyzeFrameEndpoint = useCallback(
     async (imageFile, token, { analysisMode = "manual" } = {}) => {
-      // Skip wake ping in live mode — server is active if live analysis is running.
-      // For manual mode use cached check: wakeApiBeforeAuth skips if API was alive within 90s.
-      if (analysisMode !== "live") await wakeApiBeforeAuth();
+      // Wake /health before analyze (live mode too — Render may sleep between ticks).
+      await wakeApiBeforeAuth();
 
       const fd = new FormData();
       fd.append("image", imageFile);
@@ -4134,7 +4186,16 @@ export default function Dashboard() {
                     );
                   })()
                 ) : aiStatusLoading ? null : (
-                  <p className="text-[11px] text-slate-600">تعذر التحقق من حالة النظام.</p>
+                  <p className="text-[11px] text-slate-600">
+                    {apiConnectionStatus === API_STATUS.ONLINE
+                      ? "تعذر التحقق من حالة النظام — أعد المحاولة."
+                      : apiStatusLabelAr(apiConnectionStatus)}
+                    {apiConnectionStatus !== API_STATUS.ONLINE ? (
+                      <span className="mt-1 block text-slate-500">
+                        يمكن تشغيل معاينة الكاميرا محلياً؛ التحليل الذكي يتطلب اتصال الخادم.
+                      </span>
+                    ) : null}
+                  </p>
                 )}
               </div>
 
@@ -4453,7 +4514,14 @@ export default function Dashboard() {
                     <SkeletonPulse className="h-24 w-full" />
                   </div>
                 ) : cameraCardsError ? (
-                  <p className="rounded-xl border border-accent-red/35 bg-accent-red/10 px-3 py-4 text-sm text-red-200">{cameraCardsError}</p>
+                  <div className="rounded-xl border border-accent-red/35 bg-accent-red/10 px-3 py-4 text-sm text-red-200">
+                    <p>{cameraCardsError}</p>
+                    {apiConnectionStatus !== API_STATUS.ONLINE ? (
+                      <p className="mt-2 text-xs text-slate-400">
+                        معاينة كاميرا الجهاز والتحليل الفوري متاحان عند عودة الخادم — لا حاجة لإعادة تحميل الصفحة بالكامل.
+                      </p>
+                    ) : null}
+                  </div>
                 ) : cameraCards.length === 0 ? (
                   <EmptyState
                     icon="📹"
@@ -4566,7 +4634,13 @@ export default function Dashboard() {
                 cameraCardsLoading={cameraCardsLoading}
                 supervisorEmployees={supervisorEmployees}
                 employeesLoading={supervisorEmployeesLoading}
-                apiReachable={apiReachable}
+                apiReachable={
+                  apiConnectionStatus === API_STATUS.ONLINE
+                    ? true
+                    : apiConnectionStatus === API_STATUS.CHECKING
+                      ? null
+                      : false
+                }
                 onPrintViolationsPdf={printViolationsReportPdf}
                 onPrintDishPdf={printDishReviewReportPdf}
                 onPrintGeneralPdf={printGeneralSummaryPdf}

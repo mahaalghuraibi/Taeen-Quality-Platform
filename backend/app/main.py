@@ -32,6 +32,8 @@ _DEV_CORS = [
 # working even if CORS_ALLOW_ORIGINS is missing on the API service.
 _PROD_FRONTEND_ALLOWLIST = [
     "https://taeen-quality-frontend.onrender.com",
+    # Legacy Render service name (bookmark / old docs) — keep CORS working if revived.
+    "https://ska-frontend.onrender.com",
 ]
 
 

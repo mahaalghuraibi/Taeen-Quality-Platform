@@ -36,13 +36,20 @@ function inferProductionApiBase() {
   return PRODUCTION_API_ORIGIN;
 }
 
+/** Legacy/wrong hosts that break production if left in localStorage. */
+const STALE_API_BASE_HOSTS = [
+  "https://ska-backend.onrender.com",
+  "http://ska-backend.onrender.com",
+];
+
 export function clearStaleApiBaseOverride() {
   if (typeof window === "undefined" || !import.meta.env.PROD) return;
   try {
     const v = window.localStorage?.getItem("ska_api_base");
     if (!v) return;
     const n = normalizeBase(v);
-    if (n && n !== PRODUCTION_API_ORIGIN) {
+    if (!n) return;
+    if (STALE_API_BASE_HOSTS.includes(n) || n !== PRODUCTION_API_ORIGIN) {
       window.localStorage.removeItem("ska_api_base");
     }
   } catch {

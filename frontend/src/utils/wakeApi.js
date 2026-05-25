@@ -1,68 +1,42 @@
 import { API_BASE_URL, PRODUCTION_API_ORIGIN } from "../config/apiBase.js";
-import { fetchWithTimeout } from "./fetchWithTimeout.js";
+import { isApiRecentlyAlive, markApiAlive, probeApiHealth } from "./apiHealth.js";
+
+export { markApiAlive } from "./apiHealth.js";
 
 /**
- * Render free tier cold start can exceed 30s but the auth fetch itself already
- * has a 90s timeout, so a single best-effort wake ping is enough — multi-retry
- * stacked timeouts were causing perceived "frozen" login UI on slow networks.
+ * Render free tier cold start can exceed 30–90s. probeApiHealth retries /health
+ * with a long timeout so the dashboard does not show "offline" during wake-up.
  */
-const WAKE_TIMEOUT_MS = 25_000;
-const WAKE_ATTEMPTS = 1;
+const WAKE_TIMEOUT_MS = import.meta.env.PROD ? 45_000 : 25_000;
+const WAKE_ATTEMPTS = import.meta.env.PROD ? 3 : 1;
 
-/** Skip wake ping if API responded within the last 5 minutes. */
-const WAKE_FRESH_MS = 5 * 60_000;
-let _lastAliveMs = 0;
 let _inFlightWake = null;
 
 function apiBase() {
   return (API_BASE_URL || PRODUCTION_API_ORIGIN).replace(/\/+$/, "");
 }
 
-/** Paths to probe — `/` always exists; `/health` on newer backend deploys. */
-function wakeUrls() {
-  const base = apiBase();
-  return [`${base}/`, `${base}/health`];
-}
-
-/** Any HTTP response (not a network error) means the host is reachable. */
-function isReachableResponse(res) {
-  return res.status > 0 && res.status < 502;
-}
-
-/** Call this after any successful API response to skip the next wake probe. */
-export function markApiAlive() {
-  _lastAliveMs = Date.now();
-}
-
 /**
  * Best-effort ping so Render wakes the service.
- * Single in-flight request is shared across callers; the auth fetch retains its
- * own 90s timeout so we never block the user on this probe.
- * @returns {Promise<boolean>} true if API responded
+ * Single in-flight request is shared across callers.
+ * @returns {Promise<boolean>} true if API responded with HTTP 200 on /health or /
  */
 export async function wakeApiBeforeAuth() {
-  if (Date.now() - _lastAliveMs < WAKE_FRESH_MS) return true;
+  if (isApiRecentlyAlive()) return true;
   if (_inFlightWake) return _inFlightWake;
   _inFlightWake = (async () => {
-    const urls = wakeUrls();
-    for (let attempt = 1; attempt <= WAKE_ATTEMPTS; attempt += 1) {
-      for (const url of urls) {
-        try {
-          const res = await fetchWithTimeout(
-            url,
-            { method: "GET", headers: { Accept: "application/json" } },
-            WAKE_TIMEOUT_MS,
-          );
-          if (isReachableResponse(res)) {
-            _lastAliveMs = Date.now();
-            return true;
-          }
-        } catch (err) {
-          if (attempt === WAKE_ATTEMPTS && url === urls[urls.length - 1]) {
-            console.warn("[wakeApi] API unreachable", apiBase(), err);
-          }
-        }
-      }
+    const result = await probeApiHealth({
+      maxAttempts: WAKE_ATTEMPTS,
+      timeoutMs: WAKE_TIMEOUT_MS,
+    });
+    if (result.reachable) {
+      markApiAlive();
+      return true;
+    }
+    if (result.status === "waking") {
+      console.warn("[wakeApi] API waking (cold start)", apiBase());
+    } else {
+      console.warn("[wakeApi] API unreachable", apiBase(), result.reason || "");
     }
     return false;
   })().finally(() => {
