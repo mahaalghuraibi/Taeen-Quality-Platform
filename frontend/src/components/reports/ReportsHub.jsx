@@ -3,9 +3,7 @@ import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from 
 import ReportSection from "./ReportSection.jsx";
 import { formatSaudiDateTime } from "../../utils/datetime.js";
 import {
-  exportCamerasExcel,
   exportDishRecordsExcel,
-  exportEmployeesExcel,
   exportExecutiveSummaryExcel,
   exportViolationsExcel,
 } from "../../utils/reportExcelExport.js";
@@ -122,11 +120,10 @@ function ReportsHub({
   supervisorEmployees = [],
   employeesLoading = false,
   apiReachable = null,
-  onExportCsvSummary,
-  onExportCsvViolations,
   onPrintViolationsPdf,
   onPrintDishPdf,
-  onExportCsvDish,
+  onPrintGeneralPdf,
+  reportSettings = { pdfEnabled: true, excelEnabled: true },
   setToast,
 }) {
   const [datePreset, setDatePreset] = useState("month");
@@ -713,125 +710,133 @@ function ReportsHub({
         </p>
       </ReportSection>
 
-      {/* 7 — Export Center */}
+      {/* 7 — Export Center: 3 professional reports × (PDF + Excel) only */}
       <ReportSection
         id="report-export"
         title="مركز التصدير"
-        subtitle="PDF و CSV و Excel — بيانات حقيقية فقط."
+        subtitle="PDF و Excel — بيانات حقيقية من الخادم. التصدير يعكس الفلاتر النشطة."
         accentClass="border-emerald-500/25"
         defaultOpen
         summary={
           <p className="text-xs text-slate-400">
-            التصدير يعكس الفلاتر النشطة للمخالفات ({filteredViolations.length} سجل).
+            متاح: 3 تقارير رسمية · {filteredViolations.length} مخالفة بعد التصفية ·{" "}
+            {reviewRecords.length} سجل طبق
           </p>
         }
       >
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <button
-            type="button"
-            disabled={!supervisorSummary}
-            onClick={() => onExportCsvSummary?.()}
-            className="rounded-xl border border-white/15 bg-[#0f172a] px-4 py-3 text-sm font-semibold text-slate-200 hover:border-violet-500/40 disabled:opacity-40"
-          >
-            تصدير CSV — الملخص
-          </button>
-          <button
-            type="button"
-            disabled={!supervisorSummary}
-            onClick={handleExcelExecutive}
-            className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-40"
-          >
-            تصدير Excel — الملخص
-          </button>
-          <button
-            type="button"
-            disabled={!filteredViolations.length}
-            onClick={() => onExportCsvViolations?.()}
-            className="rounded-xl border border-white/15 bg-[#0f172a] px-4 py-3 text-sm font-semibold text-slate-200 hover:border-violet-500/40 disabled:opacity-40"
-          >
-            تصدير CSV — المخالفات
-          </button>
-          <button
-            type="button"
-            disabled={!filteredViolations.length}
-            onClick={handleExcelViolations}
-            className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-100 disabled:opacity-40"
-          >
-            تصدير Excel — المخالفات
-          </button>
-          <button
-            type="button"
-            disabled={!violationsReportStats?.total}
-            onClick={() => onPrintViolationsPdf?.()}
-            className="rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-3 text-sm font-semibold text-violet-100 hover:bg-violet-500/20 disabled:opacity-40"
-          >
-            تصدير PDF — المخالفات
-          </button>
-          <button
-            type="button"
-            disabled={!reviewRecords.length}
-            onClick={() => onExportCsvDish?.()}
-            className="rounded-xl border border-white/15 bg-[#0f172a] px-4 py-3 text-sm font-semibold text-slate-200 disabled:opacity-40"
-          >
-            تصدير CSV — الأطباق
-          </button>
-          <button
-            type="button"
-            disabled={!reviewRecords.length}
-            onClick={() => {
-              const ok = exportDishRecordsExcel({
-                records: reviewRecords,
-                branchLabel,
-                periodFrom: violationsReportFrom,
-                periodTo: violationsReportTo,
-                formatDateTime: formatSaudiDateTime,
-              });
-              setToast?.({
-                type: ok ? "success" : "error",
-                text: ok ? "تم تنزيل Excel للأطباق." : "لا توجد سجلات.",
-              });
-            }}
-            className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-100 disabled:opacity-40"
-          >
-            تصدير Excel — الأطباق
-          </button>
-          <button
-            type="button"
-            disabled={!reviewRecords.length}
-            onClick={() => onPrintDishPdf?.()}
-            className="rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-3 text-sm font-semibold text-violet-100 disabled:opacity-40"
-          >
-            تصدير PDF — الأطباق
-          </button>
-          <button
-            type="button"
-            disabled={!cameraCards.length}
-            onClick={() => {
-              const ok = exportCamerasExcel({ cameras: cameraCards });
-              setToast?.({
-                type: ok ? "success" : "error",
-                text: ok ? "تم تنزيل Excel للكاميرات." : "لا توجد كاميرات.",
-              });
-            }}
-            className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-100 disabled:opacity-40"
-          >
-            تصدير Excel — الكاميرات
-          </button>
-          <button
-            type="button"
-            disabled={!supervisorEmployees.length}
-            onClick={() => {
-              const ok = exportEmployeesExcel({ employees: supervisorEmployees });
-              setToast?.({
-                type: ok ? "success" : "error",
-                text: ok ? "تم تنزيل Excel للموظفين." : "لا توجد بيانات.",
-              });
-            }}
-            className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-100 disabled:opacity-40"
-          >
-            تصدير Excel — الموظفون
-          </button>
+        <div className="grid gap-4 lg:grid-cols-3">
+          {/* Report 1 — Violations */}
+          <article className="rounded-2xl border border-red-500/25 bg-[#0a1020] p-4">
+            <h4 className="text-sm font-bold text-white">تقرير المخالفات</h4>
+            <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+              نوع المخالفة، الكاميرا، الفرع، الموظف إن توفر، نسبة الثقة، الوقت بتوقيت
+              الرياض، الحالة، وصورة الدليل عند توفرها.
+            </p>
+            <div className="mt-3 grid gap-2">
+              <button
+                type="button"
+                disabled={!violationsReportStats?.total || !reportSettings.pdfEnabled}
+                onClick={() => onPrintViolationsPdf?.()}
+                className="rounded-xl border border-violet-500/40 bg-violet-500/15 px-4 py-2.5 text-sm font-semibold text-violet-50 transition hover:bg-violet-500/25 disabled:opacity-40"
+              >
+                تصدير PDF
+              </button>
+              <button
+                type="button"
+                disabled={!filteredViolations.length || !reportSettings.excelEnabled}
+                onClick={handleExcelViolations}
+                className="rounded-xl border border-emerald-500/35 bg-emerald-500/15 px-4 py-2.5 text-sm font-semibold text-emerald-50 transition hover:bg-emerald-500/25 disabled:opacity-40"
+              >
+                تصدير Excel
+              </button>
+            </div>
+            <p className="mt-2 text-[10px] text-slate-500">
+              {filteredViolations.length} سجل ضمن الفلاتر الحالية
+            </p>
+          </article>
+
+          {/* Report 2 — Dishes */}
+          <article className="rounded-2xl border border-amber-500/25 bg-[#0a1020] p-4">
+            <h4 className="text-sm font-bold text-white">تقرير الأطباق</h4>
+            <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+              اسم الطبق، الموظف، المصدر، الثقة، حالة المراجعة، اعتُمد/رُفض،
+              المراجِع، والتاريخ والوقت بتوقيت الرياض.
+            </p>
+            <div className="mt-3 grid gap-2">
+              <button
+                type="button"
+                disabled={!reviewRecords.length || !reportSettings.pdfEnabled}
+                onClick={() => onPrintDishPdf?.()}
+                className="rounded-xl border border-violet-500/40 bg-violet-500/15 px-4 py-2.5 text-sm font-semibold text-violet-50 transition hover:bg-violet-500/25 disabled:opacity-40"
+              >
+                تصدير PDF
+              </button>
+              <button
+                type="button"
+                disabled={!reviewRecords.length || !reportSettings.excelEnabled}
+                onClick={() => {
+                  const ok = exportDishRecordsExcel({
+                    records: reviewRecords,
+                    branchLabel,
+                    periodFrom: violationsReportFrom,
+                    periodTo: violationsReportTo,
+                    formatDateTime: formatSaudiDateTime,
+                  });
+                  setToast?.({
+                    type: ok ? "success" : "error",
+                    text: ok
+                      ? `تم تنزيل Excel للأطباق (${reviewRecords.length} سجل).`
+                      : "لا توجد سجلات للتصدير.",
+                  });
+                }}
+                className="rounded-xl border border-emerald-500/35 bg-emerald-500/15 px-4 py-2.5 text-sm font-semibold text-emerald-50 transition hover:bg-emerald-500/25 disabled:opacity-40"
+              >
+                تصدير Excel
+              </button>
+            </div>
+            <p className="mt-2 text-[10px] text-slate-500">
+              {reviewRecords.length} سجل في الفترة الحالية
+            </p>
+          </article>
+
+          {/* Report 3 — General overview */}
+          <article className="rounded-2xl border border-sky-500/25 bg-[#0a1020] p-4">
+            <h4 className="text-sm font-bold text-white">التقرير العام</h4>
+            <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+              ملخص الموظفين، إجمالي التنبيهات والمخالفات، أكثر المخالفات تكراراً،
+              حالة الكاميرات، أداء الفرع، ونسبة الامتثال.
+            </p>
+            <div className="mt-3 grid gap-2">
+              <button
+                type="button"
+                disabled={!supervisorSummary || !reportSettings.pdfEnabled}
+                onClick={() => onPrintGeneralPdf?.()}
+                className="rounded-xl border border-violet-500/40 bg-violet-500/15 px-4 py-2.5 text-sm font-semibold text-violet-50 transition hover:bg-violet-500/25 disabled:opacity-40"
+              >
+                تصدير PDF
+              </button>
+              <button
+                type="button"
+                disabled={!supervisorSummary || !reportSettings.excelEnabled}
+                onClick={handleExcelExecutive}
+                className="rounded-xl border border-emerald-500/35 bg-emerald-500/15 px-4 py-2.5 text-sm font-semibold text-emerald-50 transition hover:bg-emerald-500/25 disabled:opacity-40"
+              >
+                تصدير Excel
+              </button>
+            </div>
+            <p className="mt-2 text-[10px] text-slate-500">
+              {supervisorEmployees.length} موظف · {totalCameras} كاميرا · امتثال{" "}
+              {compliancePct}
+            </p>
+          </article>
         </div>
+
+        {!reportSettings.pdfEnabled && !reportSettings.excelEnabled ? (
+          <p className="mt-3 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
+            تنبيه: تم تعطيل كل من PDF و Excel من إعدادات التقارير. فعّلها من صفحة
+            «الإعدادات» لتمكين التصدير.
+          </p>
+        ) : null}
       </ReportSection>
     </section>
   );

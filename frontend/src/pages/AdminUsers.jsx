@@ -154,7 +154,7 @@ export default function AdminUsersPage() {
       <div className="pointer-events-none absolute inset-0 overflow-hidden admin-page-static-bg" aria-hidden />
       <div className="pointer-events-none absolute inset-0 hero-vignette" />
 
-      <header className="relative z-10 border-b border-white/10 bg-[#0F172A]/85 backdrop-blur-md supports-[backdrop-filter]:bg-[#0F172A]/78">
+      <header className="relative z-10 border-b border-white/10 bg-[#0F172A]">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-3 py-3 sm:px-6">
           <Link to="/analytics" className="flex items-center">
             <SKALogo compact />
@@ -166,7 +166,7 @@ export default function AdminUsersPage() {
       </header>
 
       <main className="relative z-10 mx-auto w-full max-w-7xl px-3 py-6 sm:px-6 sm:py-8 lg:px-8">
-        <section className="rounded-2xl border border-white/10 bg-[rgba(15,23,42,0.78)] p-4 shadow-glass-lg backdrop-blur-md sm:rounded-3xl sm:p-6">
+        <section className="rounded-2xl border border-white/10 bg-[#0f172a] p-4 sm:rounded-3xl sm:p-6">
           <h1 className="text-xl font-bold text-white sm:text-2xl">إدارة المستخدمين</h1>
           <p className="mt-1 text-sm text-slate-400">إضافة المستخدمين وتعديل الصلاحيات</p>
           {error ? (

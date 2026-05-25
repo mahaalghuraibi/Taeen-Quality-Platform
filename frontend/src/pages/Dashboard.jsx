@@ -85,9 +85,9 @@ import {
   formatReportPeriodLabel,
   monitoringAlertStatusArExport,
   monitoringSeverityLabelAr,
-  taeenReportFilename,
   violationTypeLabelForReport,
 } from "../utils/reportExportHelpers.js";
+import { exportDishRecordsExcel } from "../utils/reportExcelExport.js";
 import {
   MONITORING_ZONE_DEFINITIONS,
   findCameraForZone,
@@ -202,33 +202,6 @@ function SkeletonPulse({ className = "" }) {
   );
 }
 
-function downloadUtf8Csv(filename, headerRow, rows, options = {}) {
-  const { preambleRows = [] } = options;
-  const esc = (v) => {
-    const s = v == null ? "" : String(v);
-    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-    return s;
-  };
-  const preambleLines = preambleRows.map((r) =>
-    Array.isArray(r) ? r.map(esc).join(",") : esc(r),
-  );
-  const headerLine = Array.isArray(headerRow) && headerRow.length ? headerRow.map(esc).join(",") : null;
-  const lines = [
-    ...preambleLines,
-    ...(headerLine ? [headerLine] : []),
-    ...rows.map((r) => r.map(esc).join(",")),
-  ];
-  const blob = new Blob([`\uFEFF${lines.join("\n")}`], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
 /** CSS-only relative bars from API numbers (no chart library). */
 function SupervisorAnalyticsBars({ loading, supervisorSummary }) {
   if (loading) {
@@ -327,8 +300,11 @@ const ADMIN_SETTINGS_DEFAULTS = {
     defaultSeverity: "medium",
   },
   reports: {
-    pdfEnabled: false,
-    excelEnabled: false,
+    pdfEnabled: true,
+    excelEnabled: true,
+    includeEvidence: true,
+    includeSummary: true,
+    format: "detailed", // "compact" | "detailed"
   },
   system: {
     platformName: "عين الجودة",
@@ -365,8 +341,12 @@ function normalizeAdminSettingsShape(input) {
       defaultSeverity: validSeverity ? severity : ADMIN_SETTINGS_DEFAULTS.alerts.defaultSeverity,
     },
     reports: {
-      pdfEnabled: Boolean(reportsObj.pdfEnabled),
-      excelEnabled: Boolean(reportsObj.excelEnabled),
+      // PDF/Excel are real, working features in this build — default ON.
+      pdfEnabled: reportsObj.pdfEnabled !== false,
+      excelEnabled: reportsObj.excelEnabled !== false,
+      includeEvidence: reportsObj.includeEvidence !== false,
+      includeSummary: reportsObj.includeSummary !== false,
+      format: reportsObj.format === "compact" ? "compact" : "detailed",
     },
     system: {
       platformName: String(systemObj.platformName || "").trim() || ADMIN_SETTINGS_DEFAULTS.system.platformName,
@@ -1255,8 +1235,6 @@ export default function Dashboard() {
   const [violationsReportRows, setViolationsReportRows] = useState([]);
   const [violationsReportLoading, setViolationsReportLoading] = useState(false);
   const [violationsReportError, setViolationsReportError] = useState("");
-  const hasPdfExport = false;
-  const hasExcelExport = false;
   const { role, getAccessToken, logout, handleProtectedAuthFailure } = useDashboardAuth({ setToast });
 
   const { handleDetectDish } = useDetectDish({
@@ -1325,15 +1303,46 @@ export default function Dashboard() {
   }, [toast, clearToast]);
 
   useEffect(() => {
+    // Hydrate from localStorage first (instant), then refresh from the DB-backed
+    // /api/v1/admin/settings endpoint (canonical). Unauthorized roles silently skip.
     try {
       const raw = localStorage.getItem(ADMIN_SETTINGS_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      setAdminSettings(normalizeAdminSettingsShape(parsed));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setAdminSettings(normalizeAdminSettingsShape(parsed));
+      }
     } catch {
       /* ignore corrupt admin settings cache */
     }
-  }, []);
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = getAccessToken?.();
+        if (!token) return;
+        const res = await fetch(apiUrl("/api/v1/admin/settings"), {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const body = await res.json();
+        const flat = body && typeof body.settings === "object" ? body.settings : null;
+        if (!flat || cancelled) return;
+        const nested = {
+          ai: typeof flat.ai === "object" ? flat.ai : undefined,
+          alerts: typeof flat.alerts === "object" ? flat.alerts : undefined,
+          reports: typeof flat.reports === "object" ? flat.reports : undefined,
+          system: typeof flat.system === "object" ? flat.system : undefined,
+        };
+        if (Object.values(nested).some(Boolean)) {
+          setAdminSettings(normalizeAdminSettingsShape(nested));
+        }
+      } catch {
+        /* offline / 401 — keep localStorage values */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [getAccessToken]);
 
   useEffect(() => {
     if (highlightRawId == null) return undefined;
@@ -1782,19 +1791,41 @@ export default function Dashboard() {
     ];
   }, [role]);
 
-  const saveAdminSettings = useCallback(() => {
+  const saveAdminSettings = useCallback(async () => {
     const normalized = normalizeAdminSettingsShape(adminSettings);
     setAdminSettingsSaving(true);
     try {
       localStorage.setItem(ADMIN_SETTINGS_STORAGE_KEY, JSON.stringify(normalized));
       setAdminSettings(normalized);
-      setToast({ type: "success", text: "تم حفظ إعدادات النظام محلياً." });
+      const token = getAccessToken?.();
+      if (token) {
+        try {
+          // Persist to PostgreSQL-backed system_settings (admin only).
+          const res = await fetch(apiUrl("/api/v1/admin/settings"), {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(normalized),
+          });
+          if (res.ok) {
+            setToast({ type: "success", text: "تم حفظ الإعدادات على الخادم." });
+          } else {
+            setToast({ type: "success", text: "تم الحفظ محلياً (الخادم غير متاح حالياً)." });
+          }
+        } catch {
+          setToast({ type: "success", text: "تم الحفظ محلياً (الخادم غير متاح حالياً)." });
+        }
+      } else {
+        setToast({ type: "success", text: "تم حفظ إعدادات النظام محلياً." });
+      }
     } catch {
-      setToast({ type: "error", text: "تعذر حفظ الإعدادات محلياً." });
+      setToast({ type: "error", text: "تعذر حفظ الإعدادات." });
     } finally {
       setAdminSettingsSaving(false);
     }
-  }, [adminSettings, setToast]);
+  }, [adminSettings, getAccessToken, setToast]);
 
   const resetAdminSettings = useCallback(() => {
     setAdminSettings(ADMIN_SETTINGS_DEFAULTS);
@@ -1839,11 +1870,6 @@ export default function Dashboard() {
     );
     return list;
   }, [violationsReportRows]);
-
-  const dishAnalysisExportRows = useMemo(
-    () => buildDishBranchPeriodRows(reviewRecords, reviewFilters.dateFrom, reviewFilters.dateTo),
-    [reviewRecords, reviewFilters.dateFrom, reviewFilters.dateTo],
-  );
 
   /** Dish totals by name for PDF bar chart — same filtered review records as branch/period table. */
   const dishChartBarsForPrint = useMemo(() => {
@@ -1946,193 +1972,6 @@ export default function Dashboard() {
       .slice(0, 14);
   }, [reviewRecords]);
 
-  const exportSupervisorReportCsv = useCallback(() => {
-    if (!supervisorSummary) {
-      setToast({ type: "error", text: "لا توجد بيانات ملخص للتصدير." });
-      return;
-    }
-    const s = supervisorSummary;
-    const val = (v) => (v === undefined || v === null ? "" : v);
-    const filename = taeenReportFilename("summary");
-    const branchLabel = String(s.branch_name || "").trim() || "—";
-    const periodReviews = formatReportPeriodLabel(reviewFilters.dateFrom, reviewFilters.dateTo);
-    const periodViolations = formatReportPeriodLabel(violationsReportFrom, violationsReportTo);
-    const preambleRows = [
-      [REPORT_PLATFORM_TITLE_AR, ""],
-      [REPORT_PLATFORM_TAGLINE_AR, ""],
-      ["تقرير الملخص التنفيذي", ""],
-      ["تاريخ إنشاء التقرير", formatReportDateYmd()],
-      ["الفرع", branchLabel],
-      ["الفترة الزمنية — سجلات الأطباق (حسب فلاتر المراجعة)", periodReviews],
-      ["الفترة الزمنية — مخالفات المراقبة (حسب فلاتر التقرير)", periodViolations],
-      ["", ""],
-    ];
-    const section = (titleAr) => [
-      ["", ""],
-      [titleAr, ""],
-      ["المؤشر", "القيمة"],
-    ];
-    const rows = [
-      ...section("ملخص الأداء"),
-      ["إجمالي الأطباق", val(s.total_dishes)],
-      ["الأطباق هذا الأسبوع", val(s.dishes_week)],
-      ["إجمالي الكمية", val(s.total_quantity)],
-      ["مؤشر الجودة", val(s.quality_score ?? s.compliance_rate)],
-      ["متوسط الثقة", val(s.average_confidence)],
-      ["التنبيهات", val(s.alerts_count)],
-      ["إجمالي الموظفين", val(s.total_employees)],
-      ["نشط اليوم", val(s.active_employees_today)],
-      ...section("ملخص الأطباق"),
-      ["معلّق للمراجعة", val(s.pending_reviews)],
-      ["المعتمد اليوم", val(s.approved_today)],
-      ["المرفوض اليوم", val(s.rejected_today)],
-      ["الأطباق اليوم", val(s.dishes_today ?? s.dishes_count)],
-      ["أكثر موظف مراجعات (الاسم)", val(s.top_employee_review_name)],
-      ["عدد مراجعاته", val(s.top_employee_review_count)],
-      ["أكثر طبق مسجّل", val(s.most_common_dish)],
-      ["أكثر طبق يحتاج مراجعة", val(s.most_reviewed_dish)],
-      ...section("ملخص المخالفات"),
-      ["عدد المخالفات (ملخص الخادم)", val(s.violations_count)],
-      ["إجمالي سجلات التقرير المحمّل", val(violationsReportStats.total)],
-      ["مفتوح / غير المعالج", val(violationsReportStats.openCount)],
-      ["تمت المعالجة", val(violationsReportStats.resolvedCount)],
-      ["أكثر نوع تكرارًا (ضمن التقرير)", val(violationsReportStats.topRepeated.label)],
-      ["عدد تكرار ذلك النوع", val(violationsReportStats.topRepeated.count)],
-      ...VIOLATION_REPORT_CATEGORY_ORDER.map((c) => [
-        `عدد — ${c.label}`,
-        val(violationsReportStats.typeCounts[c.key]),
-      ]),
-      ...(violationsReportStats.typeCounts._other > 0
-        ? [[`عدد — أخرى`, val(violationsReportStats.typeCounts._other)]]
-        : []),
-      ["", ""],
-      ["تحليل الأطباق حسب الفرع والفترة (البيانات المصفّاة)", "", "", ""],
-      ["الطبق", "الفرع", "عدد السجلات", "الفترة الزمنية"],
-      ...dishAnalysisExportRows.map((r) => [r.dish, r.branch, r.count, r.periodLabel]),
-    ];
-    downloadUtf8Csv(filename, [], rows, { preambleRows });
-    setToast({ type: "success", text: "تم تنزيل تقرير CSV للملخص." });
-  }, [
-    dishAnalysisExportRows,
-    reviewFilters.dateFrom,
-    reviewFilters.dateTo,
-    setToast,
-    supervisorSummary,
-    violationsReportFrom,
-    violationsReportStats,
-    violationsReportTo,
-  ]);
-
-  const exportReviewRecordsCsv = useCallback(() => {
-    if (!reviewRecords.length) {
-      setToast({ type: "error", text: "لا توجد سجلات مراجعة للتصدير." });
-      return;
-    }
-    const branchLabel =
-      String(supervisorSummary?.branch_name || "").trim() ||
-      String(reviewRecords.find((r) => r.branch_name || r.branch)?.branch_name ||
-        reviewRecords.find((r) => r.branch_name || r.branch)?.branch ||
-        "").trim() ||
-      "—";
-    const preambleRows = [
-      [REPORT_PLATFORM_TITLE_AR, ""],
-      [REPORT_PLATFORM_TAGLINE_AR, ""],
-      ["تقرير مراجعة الأطباق", ""],
-      ["تاريخ إنشاء التقرير", formatReportDateYmd()],
-      ["الفرع", branchLabel],
-      ["الفترة الزمنية", formatReportPeriodLabel(reviewFilters.dateFrom, reviewFilters.dateTo)],
-      ["", ""],
-    ];
-    downloadUtf8Csv(
-      taeenReportFilename("dish-review"),
-      [
-        "رقم",
-        "اسم الموظف",
-        "الطبق المقترح (AI)",
-        "الطبق المعتمد",
-        "الكمية",
-        "المصدر/الوجهة",
-        "الحالة",
-        "وقت التسجيل",
-        "وقت المراجعة",
-        "رابط الصورة",
-      ],
-      reviewRecords.map((r, idx) => [
-        idx + 1,
-        r.employee_name || "—",
-        r.predicted_label || "—",
-        r.confirmed_label || "—",
-        r.quantity ?? "",
-        r.source_entity || "—",
-        dishReviewStatusArExport(r.status),
-        r.recorded_at ? formatSaudiDateTime(r.recorded_at) : "—",
-        r.reviewed_at ? formatSaudiDateTime(r.reviewed_at) : "—",
-        dishReportImageLink(r),
-      ]),
-      { preambleRows },
-    );
-    setToast({ type: "success", text: "تم تنزيل سجلات المراجعة." });
-  }, [reviewFilters.dateFrom, reviewFilters.dateTo, reviewRecords, setToast, supervisorSummary]);
-
-  const exportViolationsReportLatestCsv = useCallback(() => {
-    if (!violationsSortedForExport.length) {
-      setToast({ type: "error", text: "لا توجد صفوف مخالفات للتصدير." });
-      return;
-    }
-    const branchLabel =
-      String(supervisorSummary?.branch_name || "").trim() ||
-      String(
-        violationsSortedForExport.find((r) => r.branch_name || r.branch)?.branch_name ||
-          violationsSortedForExport.find((r) => r.branch_name || r.branch)?.branch ||
-          "",
-      ).trim() ||
-      "—";
-    const preambleRows = [
-      [REPORT_PLATFORM_TITLE_AR, ""],
-      [REPORT_PLATFORM_TAGLINE_AR, ""],
-      ["تقرير مخالفات المراقبة", ""],
-      ["تاريخ إنشاء التقرير", formatReportDateYmd()],
-      ["الفرع", branchLabel],
-      ["الفترة الزمنية", formatReportPeriodLabel(violationsReportFrom, violationsReportTo)],
-      ["", ""],
-    ];
-    downloadUtf8Csv(
-      taeenReportFilename("monitoring"),
-      [
-        "رقم",
-        "نوع المخالفة",
-        "التفاصيل",
-        "الكاميرا",
-        "الفرع / المنطقة",
-        "نسبة الثقة",
-        "مستوى الخطورة",
-        "الحالة",
-        "التاريخ والوقت",
-      ],
-      violationsSortedForExport.map((row, idx) => [
-        idx + 1,
-        violationTypeLabelForReport(row),
-        String(row.details || "—")
-          .replace(/\s+/g, " ")
-          .trim(),
-        row.camera_name || "—",
-        formatAlertBranchArea(row),
-        formatMonitoringConfidencePercent(row.confidence),
-        monitoringSeverityLabelAr(row.confidence),
-        monitoringAlertStatusArExport(row.status),
-        formatSaudiDateTime(row.created_at),
-      ]),
-      { preambleRows },
-    );
-    setToast({ type: "success", text: "تم تنزيل CSV لتقرير المخالفات." });
-  }, [
-    setToast,
-    supervisorSummary,
-    violationsReportFrom,
-    violationsReportTo,
-    violationsSortedForExport,
-  ]);
-
   const printViolationsReportPdf = useCallback(() => {
     if (!violationsReportStats.total) {
       setToast({ type: "error", text: "لا يوجد تقرير للطباعة أو التصدير." });
@@ -2176,6 +2015,41 @@ export default function Dashboard() {
     window.addEventListener("afterprint", onAfterPrint);
     setTimeout(() => window.print(), 100);
   }, [reviewRecords.length, setToast]);
+
+  /**
+   * General report PDF — reuses the violations printable section because it already
+   * contains: executive summary KPIs + dishes-by-branch chart + violations breakdown.
+   * If the violations section is empty we fall back to the dish review print so the
+   * user still gets a meaningful PDF for the "التقرير العام" button.
+   */
+  const printGeneralSummaryPdf = useCallback(() => {
+    if (violationsReportStats.total > 0) {
+      const el = document.getElementById("ska-violations-report-print");
+      if (el && el.querySelector("tbody tr")) {
+        document.body.classList.add("ska-print-violations-only");
+        const prevTitle = document.title;
+        document.title = `taeen-quality-general-report-${formatReportDateYmd()}`;
+        const onAfterPrint = () => {
+          document.body.classList.remove("ska-print-violations-only");
+          document.title = prevTitle;
+          window.removeEventListener("afterprint", onAfterPrint);
+        };
+        window.addEventListener("afterprint", onAfterPrint);
+        setTimeout(() => window.print(), 100);
+        return;
+      }
+    }
+    if (reviewRecords.length) {
+      printDishReviewReportPdf();
+      return;
+    }
+    setToast({ type: "error", text: "لا توجد بيانات كافية لتوليد التقرير العام." });
+  }, [
+    violationsReportStats.total,
+    reviewRecords.length,
+    printDishReviewReportPdf,
+    setToast,
+  ]);
 
   const supervisorCards = useMemo(
     () => {
@@ -4598,7 +4472,7 @@ export default function Dashboard() {
                       {cameraCards.map((c) => (
                         <article
                           key={c.id}
-                          className="rounded-xl border border-white/10 bg-gradient-to-br from-[#0B1327]/90 to-[#060d1f]/80 p-4 text-xs text-slate-200 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] transition hover:border-sky-500/25"
+                          className="rounded-xl border border-white/10 bg-[#0B1327] p-4 text-xs text-slate-200 transition hover:border-sky-500/25"
                         >
                           <div className="flex flex-wrap items-start justify-between gap-2 border-b border-white/5 pb-2">
                             <p className="text-sm font-semibold text-white">{c.name}</p>
@@ -4693,11 +4567,10 @@ export default function Dashboard() {
                 supervisorEmployees={supervisorEmployees}
                 employeesLoading={supervisorEmployeesLoading}
                 apiReachable={apiReachable}
-                onExportCsvSummary={exportSupervisorReportCsv}
-                onExportCsvViolations={exportViolationsReportLatestCsv}
                 onPrintViolationsPdf={printViolationsReportPdf}
                 onPrintDishPdf={printDishReviewReportPdf}
-                onExportCsvDish={exportReviewRecordsCsv}
+                onPrintGeneralPdf={printGeneralSummaryPdf}
+                reportSettings={adminSettings.reports}
                 setToast={setToast}
               />
             ) : null}
@@ -4715,20 +4588,35 @@ export default function Dashboard() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    disabled={!reviewRecords.length}
-                    onClick={() => exportReviewRecordsCsv()}
-                    className="rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-brand-sky/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
+                    disabled={!reviewRecords.length || !adminSettings.reports.pdfEnabled}
+                    onClick={() => printDishReviewReportPdf()}
+                    title="طباعة أو حفظ PDF عبر نافذة المتصفح (اختر «حفظ كملف PDF»)"
+                    className="rounded-xl border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-xs font-semibold text-violet-100 transition hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-45"
                   >
-                    تصدير CSV ({reviewRecords.length})
+                    تصدير PDF
                   </button>
                   <button
                     type="button"
-                    disabled={!reviewRecords.length}
-                    onClick={() => printDishReviewReportPdf()}
-                    title="طباعة أو حفظ PDF عبر نافذة المتصفح (اختر «حفظ كملف PDF»)"
-                    className="rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-brand-sky/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
+                    disabled={!reviewRecords.length || !adminSettings.reports.excelEnabled}
+                    onClick={() => {
+                      const ok = exportDishRecordsExcel({
+                        records: reviewRecords,
+                        branchLabel:
+                          String(supervisorSummary?.branch_name || "").trim() || "—",
+                        periodFrom: reviewFilters.dateFrom,
+                        periodTo: reviewFilters.dateTo,
+                        formatDateTime: formatSaudiDateTime,
+                      });
+                      setToast({
+                        type: ok ? "success" : "error",
+                        text: ok
+                          ? `تم تنزيل Excel (${reviewRecords.length} سجل).`
+                          : "لا توجد سجلات للتصدير.",
+                      });
+                    }}
+                    className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-45"
                   >
-                    تصدير PDF
+                    تصدير Excel
                   </button>
                   <button
                     type="button"
@@ -5062,7 +4950,7 @@ export default function Dashboard() {
                   listClassName="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
                 >
                   {supervisorEmployees.map((e) => (
-                    <article key={e.id} className="rounded-2xl border border-white/10 bg-[linear-gradient(145deg,#071224,#0b1731)] p-4 shadow-[0_10px_22px_-18px_rgba(59,130,246,0.8)] transition hover:border-white/18">
+                    <article key={e.id} className="rounded-2xl border border-white/10 bg-[#0a1525] p-4 transition hover:border-white/18">
                       <div className="mb-2 flex items-start justify-between gap-2">
                         <p className="font-semibold text-white">
                         {e.full_name || e.username}
@@ -5277,35 +5165,64 @@ export default function Dashboard() {
                     <h4 className="text-sm font-semibold text-white">
                       د — إعدادات التقارير
                     </h4>
+                    <p className="mt-1 text-xs text-slate-400">
+                      التقارير المدعومة: PDF و Excel — تُولَّد من بيانات الخادم الحقيقية.
+                    </p>
+
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                      <button
-                        type="button"
-                        disabled={!hasPdfExport}
-                        onClick={() =>
-                          setAdminSettings((prev) => ({
-                            ...prev,
-                            reports: { ...prev.reports, pdfEnabled: !prev.reports.pdfEnabled },
-                          }))
-                        }
-                        className="flex items-center justify-between rounded-xl border border-white/10 bg-[#060d1f]/80 px-3 py-2 text-sm text-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <span>تفعيل تصدير PDF</span>
-                        <span className="text-xs text-slate-400">{hasPdfExport ? "متاح" : "غير متاح حالياً"}</span>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!hasExcelExport}
-                        onClick={() =>
-                          setAdminSettings((prev) => ({
-                            ...prev,
-                            reports: { ...prev.reports, excelEnabled: !prev.reports.excelEnabled },
-                          }))
-                        }
-                        className="flex items-center justify-between rounded-xl border border-white/10 bg-[#060d1f]/80 px-3 py-2 text-sm text-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <span>تفعيل تصدير Excel</span>
-                        <span className="text-xs text-slate-400">{hasExcelExport ? "متاح" : "غير متاح حالياً"}</span>
-                      </button>
+                      {[
+                        { key: "pdfEnabled", label: "تفعيل تصدير PDF" },
+                        { key: "excelEnabled", label: "تفعيل تصدير Excel" },
+                        { key: "includeEvidence", label: "تضمين صور الأدلة في التقرير" },
+                        { key: "includeSummary", label: "تضمين ملخص الإدارة" },
+                      ].map(({ key, label }) => (
+                        <label
+                          key={key}
+                          className="flex items-center justify-between rounded-xl border border-white/10 bg-[#060d1f]/80 px-3 py-2 text-sm text-slate-200"
+                        >
+                          <span>{label}</span>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={Boolean(adminSettings.reports[key])}
+                            onClick={() =>
+                              setAdminSettings((prev) => ({
+                                ...prev,
+                                reports: { ...prev.reports, [key]: !prev.reports[key] },
+                              }))
+                            }
+                            className={`relative h-6 w-11 rounded-full transition ${
+                              adminSettings.reports[key] ? "bg-sky-500/70" : "bg-slate-700"
+                            }`}
+                          >
+                            <span
+                              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition ${
+                                adminSettings.reports[key] ? "right-0.5" : "right-[1.35rem]"
+                              }`}
+                            />
+                          </button>
+                        </label>
+                      ))}
+
+                      <label className="rounded-xl border border-white/10 bg-[#060d1f]/80 p-3 sm:col-span-2">
+                        <span className="text-xs text-slate-400">تنسيق التقرير</span>
+                        <select
+                          value={adminSettings.reports.format}
+                          onChange={(e) =>
+                            setAdminSettings((prev) => ({
+                              ...prev,
+                              reports: {
+                                ...prev.reports,
+                                format: e.target.value === "compact" ? "compact" : "detailed",
+                              },
+                            }))
+                          }
+                          className="mt-2 w-full rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-sky/50"
+                        >
+                          <option value="detailed">تفصيلي</option>
+                          <option value="compact">مختصر</option>
+                        </select>
+                      </label>
                     </div>
                   </article>
 

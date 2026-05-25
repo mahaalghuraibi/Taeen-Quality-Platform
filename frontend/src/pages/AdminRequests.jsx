@@ -1,29 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import * as XLSX from "xlsx";
 import { ACCESS_TOKEN_KEY } from "../constants.js";
 import SKALogo from "../components/SKALogo.jsx";
 import { PUBLIC_PAGE_TITLES } from "../constants/branding.js";
 import { apiUrl } from "../config/apiBase.js";
 
 const ADMIN_REQUESTS_URL = apiUrl("/api/v1/admin-requests");
-
-function downloadUtf8Csv(filename, headerRow, rows) {
-  const esc = (v) => {
-    const s = v == null ? "" : String(v);
-    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-    return s;
-  };
-  const lines = [headerRow.map(esc).join(","), ...rows.map((r) => r.map(esc).join(","))];
-  const blob = new Blob([`\uFEFF${lines.join("\n")}`], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
 
 function statusLabelAr(status) {
   if (status === "pending") return "قيد المراجعة";
@@ -126,18 +109,35 @@ export default function AdminRequestsPage() {
     }
   }
 
-  function exportFilteredCsv() {
+  function exportFilteredExcel() {
     if (!filteredRequests.length) {
       setToast({ variant: "error", text: "لا توجد صفوف للتصدير في هذا العرض." });
       return;
     }
-    const filename = `ska-admin-requests-${statusFilter}-${new Date().toISOString().slice(0, 10)}.csv`;
-    downloadUtf8Csv(
-      filename,
-      ["id", "name", "email", "company", "phone", "reason", "status"],
-      filteredRequests.map((r) => [r.id, r.name, r.email, r.company, r.phone, r.reason, r.status]),
-    );
-    setToast({ variant: "success", text: "تم تنزيل ملف CSV." });
+    const today = new Date().toISOString().slice(0, 10);
+    const filename = `ska-admin-requests-${statusFilter}-${today}.xlsx`;
+    const rows = [
+      ["طلبات الحساب الإداري"],
+      ["الفلتر", statusFilter === "all" ? "الكل" : statusLabelAr(statusFilter)],
+      ["تاريخ التصدير", today],
+      [],
+      ["#", "الاسم", "البريد الإلكتروني", "الجهة", "الهاتف", "السبب", "الحالة"],
+      ...filteredRequests.map((r, i) => [
+        i + 1,
+        r.name,
+        r.email,
+        r.company,
+        r.phone,
+        r.reason,
+        statusLabelAr(r.status),
+      ]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!rtl"] = true;
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "الطلبات الإدارية");
+    XLSX.writeFile(wb, filename, { bookType: "xlsx", compression: true });
+    setToast({ variant: "success", text: "تم تنزيل ملف Excel." });
   }
 
   return (
@@ -145,7 +145,8 @@ export default function AdminRequestsPage() {
       <div className="pointer-events-none absolute inset-0 overflow-hidden admin-page-static-bg" aria-hidden />
       <div className="pointer-events-none absolute inset-0 hero-vignette" />
 
-      <header className="relative z-10 border-b border-white/10 bg-[#0F172A]/85 backdrop-blur-md supports-[backdrop-filter]:bg-[#0F172A]/78">
+      {/* Solid backgrounds — no backdrop-blur on scroll-heavy admin pages (perf). */}
+      <header className="relative z-10 border-b border-white/10 bg-[#0F172A]">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-3 py-3 sm:px-6">
           <Link to="/analytics" className="flex items-center">
             <SKALogo compact />
@@ -157,7 +158,7 @@ export default function AdminRequestsPage() {
       </header>
 
       <main className="relative z-10 mx-auto w-full max-w-7xl px-3 py-6 sm:px-6 sm:py-8 lg:px-8">
-        <section className="rounded-2xl border border-white/10 bg-[rgba(15,23,42,0.78)] p-4 shadow-glass-lg backdrop-blur-md sm:rounded-3xl sm:p-6">
+        <section className="rounded-2xl border border-white/10 bg-[#0f172a] p-4 sm:rounded-3xl sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h1 className="text-xl font-bold text-white sm:text-2xl">طلبات الحساب الإداري</h1>
@@ -166,10 +167,10 @@ export default function AdminRequestsPage() {
             <button
               type="button"
               disabled={!filteredRequests.length}
-              onClick={() => exportFilteredCsv()}
-              className="rounded-xl border border-brand-sky/40 bg-brand/15 px-3 py-2 text-xs font-semibold text-sky-100 transition hover:bg-brand/25 disabled:cursor-not-allowed disabled:opacity-45"
+              onClick={() => exportFilteredExcel()}
+              className="rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-45"
             >
-              تصدير CSV ({filteredRequests.length})
+              تصدير Excel ({filteredRequests.length})
             </button>
           </div>
 
@@ -283,10 +284,10 @@ export default function AdminRequestsPage() {
         <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[60] flex justify-center px-3 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] pt-2">
           <div
             role="alert"
-            className={`pointer-events-auto w-full max-w-md rounded-xl border px-3 py-3 text-center text-sm shadow-lg backdrop-blur-md ${
+            className={`pointer-events-auto w-full max-w-md rounded-xl border px-3 py-3 text-center text-sm shadow-lg ${
               toast.variant === "success"
-                ? "border-accent-green/50 bg-[rgba(15,23,42,0.92)] text-green-200"
-                : "border-accent-red/50 bg-[rgba(15,23,42,0.92)] text-red-200"
+                ? "border-accent-green/50 bg-[#0f172a] text-green-200"
+                : "border-accent-red/50 bg-[#0f172a] text-red-200"
             }`}
           >
             {toast.text}
