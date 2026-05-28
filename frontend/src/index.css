@@ -3,10 +3,13 @@
 @tailwind utilities;
 
 @layer utilities {
-  /* Off-screen dashboard sections skip layout/paint until near viewport. */
+  /* Off-screen dashboard sections used to enable `content-visibility: auto`
+     with a 520px placeholder. Real sections (analytics, cameras, reports)
+     are 1000–1800px tall, so the placeholder caused layout shifts on every
+     wheel tick and gave the user the "cards appearing/disappearing while
+     scrolling" effect. Class kept as a no-op so existing markup is safe. */
   .dashboard-section-cv {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 520px;
+    content-visibility: visible;
   }
 }
 

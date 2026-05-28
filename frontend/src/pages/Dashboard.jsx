@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AOS from "aos";
 import "aos/dist/aos.css";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -30,6 +30,7 @@ import LiveMonitoringZoneCards from "../components/monitoring/LiveMonitoringZone
 import SupervisorExecutiveHero from "../components/supervisor/SupervisorExecutiveHero.jsx";
 import SupervisorSummaryCards from "../components/supervisor/SupervisorSummaryCards.jsx";
 import SupervisorMonitoringOverview from "../components/supervisor/SupervisorMonitoringOverview.jsx";
+import LazyWhenVisible from "../components/shared/LazyWhenVisible.jsx";
 import SupervisorAnalyticsRecharts from "../components/supervisor/SupervisorAnalyticsRecharts.jsx";
 import ReportsHub from "../components/reports/ReportsHub.jsx";
 import StickyAnalyticsSummaryBar from "../components/supervisor/StickyAnalyticsSummaryBar.jsx";
@@ -208,8 +209,13 @@ function SkeletonPulse({ className = "" }) {
   );
 }
 
-/** CSS-only relative bars from API numbers (no chart library). */
-function SupervisorAnalyticsBars({ loading, supervisorSummary }) {
+/**
+ * CSS-only relative bars from API numbers (no chart library).
+ *
+ * Wrapped with `React.memo` below so unrelated dashboard state changes
+ * (toasts, monitoring frames, scroll position) don't re-render the bar chart.
+ */
+function SupervisorAnalyticsBarsImpl({ loading, supervisorSummary }) {
   if (loading) {
     return (
       <div className="rounded-2xl border border-white/10 bg-[#060d1f]/45 p-4 sm:p-5">
@@ -263,7 +269,7 @@ function SupervisorAnalyticsBars({ loading, supervisorSummary }) {
               </div>
               <div className="h-2.5 overflow-hidden rounded-full bg-[#020617]/80 ring-1 ring-white/5">
                 <div
-                  className={`h-full rounded-full bg-gradient-to-l ${r.barClass} transition-all duration-500`}
+                  className={`h-full rounded-full bg-gradient-to-l ${r.barClass}`}
                   style={{ width: `${pct}%` }}
                 />
               </div>
@@ -274,6 +280,8 @@ function SupervisorAnalyticsBars({ loading, supervisorSummary }) {
     </div>
   );
 }
+
+const SupervisorAnalyticsBars = memo(SupervisorAnalyticsBarsImpl);
 
 // Performance: removed backdrop-blur-sm + shadow-glass + hover transitions from
 // the shared card classes. These were applied to ~200 cards, so even at 60fps the
@@ -936,7 +944,7 @@ function PpeStatusDashboard({ result, liveActive, liveTickBusy, manualLoading, z
           </div>
           <div className="h-1 w-full bg-white/[0.05]">
             <div
-              className={`h-full transition-all duration-700 ${
+              className={`h-full transition-[width,background-color] duration-500 ${
                 qualityPct >= 95 ? "bg-emerald-500" : qualityPct >= 70 ? "bg-amber-500" : "bg-red-500"
               }`}
               style={{ width: `${cannotVerify ? 50 : qualityPct}%` }}
@@ -954,7 +962,7 @@ function PpeStatusDashboard({ result, liveActive, liveTickBusy, manualLoading, z
           return (
             <div
               key={key}
-              className={`relative overflow-hidden rounded-xl border p-3.5 transition-all duration-300 ${cfg.card}`}
+              className={`relative overflow-hidden rounded-xl border p-3.5 transition-colors duration-300 ${cfg.card}`}
             >
               {/* Pulsing overlay for verifying state */}
               {cfg.pulse && (
@@ -2063,6 +2071,24 @@ export default function Dashboard() {
     printDishReviewReportPdf,
     setToast,
   ]);
+
+  /** Precompute alert counts + the top-10 slice once per `alertsList` change.
+   *  Without this we walked the array three times per render of the dashboard
+   *  (open count, resolved count, slice), which is hot under scroll inertia
+   *  + 1Hz live monitoring updates. */
+  const recentAlerts = useMemo(() => {
+    if (!Array.isArray(alertsList) || alertsList.length === 0) {
+      return { items: [], openCount: 0, resolvedCount: 0 };
+    }
+    let openCount = 0;
+    let resolvedCount = 0;
+    for (const a of alertsList) {
+      const st = String(a.status || "").toLowerCase();
+      if (st === "open") openCount += 1;
+      else if (st === "resolved") resolvedCount += 1;
+    }
+    return { items: alertsList.slice(0, 10), openCount, resolvedCount };
+  }, [alertsList]);
 
   const supervisorCards = useMemo(
     () => {
@@ -3909,7 +3935,7 @@ export default function Dashboard() {
               {supervisorCards.map((m) => (
                 <article
                   key={m.label}
-                  className={`${glassCard} relative overflow-hidden p-5 hover:-translate-y-0.5`}
+                  className={`${glassCard} relative overflow-hidden p-5`}
                 >
                   <div
                     className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${m.glow} to-transparent opacity-60`}
@@ -3923,13 +3949,17 @@ export default function Dashboard() {
               ))}
               </div>
               <div className="grid gap-8 lg:grid-cols-2">
-                <SupervisorAnalyticsRecharts loading={supervisorSummaryLoading} supervisorSummary={supervisorSummary} />
-                <SupervisorAnalyticsBars loading={supervisorSummaryLoading} supervisorSummary={supervisorSummary} />
+                <LazyWhenVisible minHeight={256}>
+                  <SupervisorAnalyticsRecharts loading={supervisorSummaryLoading} supervisorSummary={supervisorSummary} />
+                </LazyWhenVisible>
+                <LazyWhenVisible minHeight={256}>
+                  <SupervisorAnalyticsBars loading={supervisorSummaryLoading} supervisorSummary={supervisorSummary} />
+                </LazyWhenVisible>
               </div>
             </section>
 
             {/* ── آخر 10 مخالفات — recent violations widget with evidence thumbnails ── */}
-            {alertsList.length > 0 && (
+            {recentAlerts.items.length > 0 && (
               <div className="mb-6 rounded-xl border border-white/10 bg-[#060d1f]/80 overflow-hidden">
                 <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-white/[0.07]">
                   <p className="text-xs font-semibold text-slate-200">
@@ -3938,16 +3968,16 @@ export default function Dashboard() {
                   <div className="flex items-center gap-2 text-[10px] text-slate-500">
                     <span className="inline-flex items-center gap-1">
                       <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-                      {alertsList.filter((a) => (a.status || "").toLowerCase() === "open").length} مفتوحة
+                      {recentAlerts.openCount} مفتوحة
                     </span>
                     <span className="inline-flex items-center gap-1">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                      {alertsList.filter((a) => (a.status || "").toLowerCase() === "resolved").length} مُعالَجة
+                      {recentAlerts.resolvedCount} مُعالَجة
                     </span>
                   </div>
                 </div>
                 <ul className="divide-y divide-white/[0.04]">
-                  {alertsList.slice(0, 10).map((a) => {
+                  {recentAlerts.items.map((a) => {
                     const typeLabel =
                       String(a.label_ar || "").trim() ||
                       getViolationLabel(canonicalMonitoringViolationType(a.type));
@@ -3958,7 +3988,7 @@ export default function Dashboard() {
                       : "bg-red-500";
                     const evidence = a.image_data_url || a.evidence_image || a.snapshot || "";
                     return (
-                      <li key={a.id} className="flex items-center gap-3 px-4 py-2 transition hover:bg-white/[0.02]">
+                      <li key={a.id} className="flex items-center gap-3 px-4 py-2">
                         {/* Evidence thumbnail (image of the violation) */}
                         {evidence ? (
                           <img
@@ -5494,7 +5524,7 @@ export default function Dashboard() {
 
         {rejectTarget ? (
           <div
-            className="fixed inset-0 z-[185] flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm"
+            className="fixed inset-0 z-[185] flex items-center justify-center bg-black/75 p-4"
             role="dialog"
             aria-modal="true"
             onClick={(e) => {
@@ -5538,7 +5568,7 @@ export default function Dashboard() {
 
         {editApproveTarget ? (
           <div
-            className="fixed inset-0 z-[185] flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm"
+            className="fixed inset-0 z-[185] flex items-center justify-center bg-black/75 p-4"
             role="dialog"
             aria-modal="true"
             onClick={(e) => {
