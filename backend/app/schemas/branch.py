@@ -81,3 +81,11 @@ class BranchRequestDecision(BaseModel):
     # Only used when approving: optional override (defaults to the requested name/city).
     branch_name: str | None = Field(default=None, min_length=2, max_length=255)
     city: str | None = Field(default=None, max_length=255)
+
+
+class BranchRequestActionResponse(BaseModel):
+    """Returned after admin approves/rejects a branch request."""
+
+    ok: bool = True
+    message: str
+    request: BranchRequestOut

@@ -15,6 +15,16 @@ const STATUS_FILTERS = [
   { id: "rejected", label: "مرفوضة" },
 ];
 
+function parseApiDetail(detail) {
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0];
+    if (typeof first === "string") return first;
+    if (first && typeof first.msg === "string") return first.msg;
+  }
+  return "";
+}
+
 function formatDate(iso) {
   if (!iso) return "—";
   try {
@@ -56,10 +66,13 @@ export default function AdminBranchesPage() {
   const [editCity, setEditCity] = useState("");
 
   const [requestStatus, setRequestStatus] = useState("pending");
+  const [decidingId, setDecidingId] = useState(null);
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async ({ keepMessages = false } = {}) => {
     setLoading(true);
-    setError("");
+    if (!keepMessages) {
+      setError("");
+    }
     if (!token) {
       setError("يجب تسجيل الدخول كمسؤول للوصول إلى إدارة الفروع.");
       setLoading(false);
@@ -82,6 +95,16 @@ export default function AdminBranchesPage() {
         setError("ليس لديك صلاحية الوصول لإدارة الفروع.");
         setBranches([]);
         setRequests([]);
+        return;
+      }
+      if (!branchesRes.ok) {
+        const errBody = await branchesRes.json().catch(() => ({}));
+        setError(parseApiDetail(errBody?.detail) || "تعذر تحميل قائمة الفروع.");
+        return;
+      }
+      if (!requestsRes.ok) {
+        const errBody = await requestsRes.json().catch(() => ({}));
+        setError(parseApiDetail(errBody?.detail) || "تعذر تحميل طلبات الفروع.");
         return;
       }
       const branchesData = await branchesRes.json().catch(() => []);
@@ -222,27 +245,33 @@ export default function AdminBranchesPage() {
     clearMessages();
     let reviewNote = null;
     if (decision === "rejected") {
-      reviewNote = window.prompt("سبب الرفض (اختياري):") || null;
+      const prompted = window.prompt("سبب الرفض (اختياري):");
+      if (prompted === null) return;
+      reviewNote = prompted.trim() || null;
     }
+    setDecidingId(req.id);
     try {
       const res = await fetch(`${BRANCH_REQUESTS_URL}/${req.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", ...authHeaders },
+        headers: { "Content-Type": "application/json", Accept: "application/json", ...authHeaders },
         body: JSON.stringify({ status: decision, review_note: reviewNote }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(typeof data?.detail === "string" ? data.detail : "تعذر تحديث الطلب.");
+        setError(parseApiDetail(data?.detail) || "تعذر تحديث الطلب.");
         return;
       }
-      setSuccess(
-        decision === "approved"
-          ? `تمت الموافقة على طلب "${req.branch_name}".`
-          : `تم رفض طلب "${req.branch_name}".`,
-      );
-      await loadAll();
+      const serverMessage = typeof data?.message === "string" ? data.message.trim() : "";
+      if (decision === "approved") {
+        setSuccess(serverMessage || "تم قبول الطلب وإضافة الفرع بنجاح");
+      } else {
+        setSuccess(serverMessage || `تم رفض طلب "${req.branch_name}".`);
+      }
+      await loadAll({ keepMessages: true });
     } catch {
-      setError("تعذر الاتصال بالخادم.");
+      setError("تعذر الاتصال بالخادم. تحقق من الشبكة وأعد المحاولة.");
+    } finally {
+      setDecidingId(null);
     }
   }
 
@@ -526,15 +555,17 @@ export default function AdminBranchesPage() {
                           <div className="flex items-center gap-2">
                             <button
                               type="button"
+                              disabled={decidingId === r.id}
                               onClick={() => decideRequest(r, "approved")}
-                              className="rounded-lg border border-accent-green/40 bg-accent-green/10 px-2.5 py-1 text-xs text-green-200 transition hover:bg-accent-green/20"
+                              className="rounded-lg border border-accent-green/40 bg-accent-green/10 px-2.5 py-1 text-xs text-green-200 transition hover:bg-accent-green/20 disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              قبول
+                              {decidingId === r.id ? "جاري المعالجة…" : "قبول"}
                             </button>
                             <button
                               type="button"
+                              disabled={decidingId === r.id}
                               onClick={() => decideRequest(r, "rejected")}
-                              className="rounded-lg border border-accent-red/40 bg-accent-red/10 px-2.5 py-1 text-xs text-red-200 transition hover:bg-accent-red/20"
+                              className="rounded-lg border border-accent-red/40 bg-accent-red/10 px-2.5 py-1 text-xs text-red-200 transition hover:bg-accent-red/20 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               رفض
                             </button>

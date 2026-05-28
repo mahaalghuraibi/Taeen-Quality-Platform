@@ -330,8 +330,32 @@ def _seed_default_branches() -> None:
                 )
             )
         db.commit()
+        _sync_branches_id_sequence(db)
     finally:
         db.close()
+
+
+def _sync_branches_id_sequence(db: Session) -> None:
+    """After seeding explicit branch ids (1/2/3), bump the PostgreSQL sequence.
+
+    Without this, the next INSERT without an explicit id can reuse id=1 and raise
+    IntegrityError — the approval endpoint then returns 500 even though the
+  request row may look stuck in pending.
+    """
+    if settings.DATABASE_URL.startswith("sqlite"):
+        return
+    try:
+        db.execute(
+            text(
+                "SELECT setval("
+                "pg_get_serial_sequence('branches', 'id'), "
+                "COALESCE((SELECT MAX(id) FROM branches), 1), "
+                "true)"
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 def _ensure_default_tenant() -> None:
