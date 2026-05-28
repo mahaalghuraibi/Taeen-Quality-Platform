@@ -5235,8 +5235,9 @@ export default function Dashboard() {
               ) : (
                 <div className="space-y-5">
                   <article className="rounded-2xl border border-white/10 bg-[#0B1327]/70 p-4">
-                    <h4 className="text-sm font-semibold text-white">
-                      أ — إعدادات الذكاء الاصطناعي
+                    <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
+                      <span aria-hidden className="text-base leading-none">🤖</span>
+                      <span>إعدادات الذكاء الاصطناعي</span>
                     </h4>
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
                       <label className="rounded-xl border border-white/10 bg-[#060d1f]/80 p-3">
@@ -5306,7 +5307,10 @@ export default function Dashboard() {
                   </article>
 
                   <article className="rounded-2xl border border-white/10 bg-[#0B1327]/70 p-4">
-                    <h4 className="text-sm font-semibold text-white">ب — إعدادات الكاميرات</h4>
+                    <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
+                      <span aria-hidden className="text-base leading-none">📹</span>
+                      <span>إعدادات الكاميرات</span>
+                    </h4>
                     <p className="mt-2 text-xs leading-relaxed text-slate-400">
                       تهيئة كاميرات IP و RTSP والمعاينة تتم من قسم «الكاميرات». كلمات المرور لا تُعرض بعد الحفظ، وتُخزَّن
                       مؤقتاً على المتصفح إلى أن يُفعَّل التخزين في الخادم.
@@ -5323,8 +5327,9 @@ export default function Dashboard() {
                   </article>
 
                   <article className="rounded-2xl border border-white/10 bg-[#0B1327]/70 p-4">
-                    <h4 className="text-sm font-semibold text-white">
-                      ج — إعدادات التنبيهات
+                    <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
+                      <span aria-hidden className="text-base leading-none">🔔</span>
+                      <span>إعدادات التنبيهات</span>
                     </h4>
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
                       <label className="flex items-center justify-between rounded-xl border border-white/10 bg-[#060d1f]/80 px-3 py-2 text-sm text-slate-200">
@@ -5371,10 +5376,11 @@ export default function Dashboard() {
                   </article>
 
                   <article className="rounded-2xl border border-white/10 bg-[#0B1327]/70 p-4">
-                    <h4 className="text-sm font-semibold text-white">
-                      د — إعدادات التقارير
+                    <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
+                      <span aria-hidden className="text-base leading-none">📊</span>
+                      <span>إعدادات التقارير</span>
                     </h4>
-                    <p className="mt-1 text-xs text-slate-400">
+                    <p className="mt-2 text-xs text-slate-400">
                       التقارير المدعومة: PDF و Excel — تُولَّد من بيانات الخادم الحقيقية.
                     </p>
 
@@ -5435,12 +5441,14 @@ export default function Dashboard() {
                     </div>
                   </article>
 
-                  {/* Section "هـ — إعدادات النظام العامة" was removed in v2: language, timezone,
-                      and platform name are fixed system constants and shouldn't be operator-editable.
-                      Operational settings live in sections (أ–د) above and (و) below. */}
+                  {/* General platform settings (language, timezone, brand name) were removed in v2:
+                      fixed system constants — not operator-editable. */}
 
                   <article className="rounded-2xl border border-white/10 bg-[#0B1327]/70 p-4">
-                    <h4 className="text-sm font-semibold text-white">و — إدارة المستخدمين</h4>
+                    <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
+                      <span aria-hidden className="text-base leading-none">👥</span>
+                      <span>إدارة المستخدمين</span>
+                    </h4>
                     <p className="mt-2 text-xs text-slate-400">إنشاء وتعديل حسابات الموظفين والمشرفين والمدراء.</p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Link
@@ -5459,7 +5467,10 @@ export default function Dashboard() {
                   </article>
 
                   <article className="rounded-2xl border border-white/10 bg-[#0B1327]/70 p-4">
-                    <h4 className="text-sm font-semibold text-white">ز — إدارة الفروع</h4>
+                    <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
+                      <span aria-hidden className="text-base leading-none">🏢</span>
+                      <span>إدارة الفروع</span>
+                    </h4>
                     <p className="mt-2 text-xs text-slate-400">
                       إضافة فروع جديدة، تعديل الأسماء والمدن، تعطيل الفروع، ومراجعة طلبات الفروع الجديدة.
                     </p>
