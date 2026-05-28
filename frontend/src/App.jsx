@@ -16,6 +16,7 @@ import AdminRequestPage from "./pages/AdminRequest.jsx";
 const Dashboard = lazy(() => import("./pages/Dashboard.jsx"));
 const AdminUsersPage = lazy(() => import("./pages/AdminUsers.jsx"));
 const AdminRequestsPage = lazy(() => import("./pages/AdminRequests.jsx"));
+const AdminBranchesPage = lazy(() => import("./pages/AdminBranches.jsx"));
 const MaskDetectionTest = lazy(() => import("./pages/MaskDetectionTest.jsx"));
 const PeopleCountTest = lazy(() => import("./pages/PeopleCountTest.jsx"));
 
@@ -68,6 +69,16 @@ const router = createBrowserRouter([
       <AdminRoute>
         <Suspense fallback={<RouteFallback />}>
           <AdminRequestsPage />
+        </Suspense>
+      </AdminRoute>
+    ),
+  },
+  {
+    path: "/admin/branches",
+    element: (
+      <AdminRoute>
+        <Suspense fallback={<RouteFallback />}>
+          <AdminBranchesPage />
         </Suspense>
       </AdminRoute>
     ),

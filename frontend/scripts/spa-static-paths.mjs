@@ -21,6 +21,7 @@ const ROUTE_DIRS = [
   "admin-request",
   "admin/users",
   "admin/requests",
+  "admin/branches",
   "dashboard",
   "dashboard/search",
   "dashboard/records",

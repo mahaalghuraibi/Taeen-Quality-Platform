@@ -7,6 +7,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.models.branch import Branch
 from app.models.user import User
 from app.schemas.auth import TokenResponse
 from app.schemas.user import UserCreate, UserOut
@@ -133,8 +134,45 @@ def create_user(
 
     raw_name = (payload.full_name or "").strip() if payload.full_name is not None else ""
     org_name = (payload.organization_name or "").strip() or None
-    branch_id = int(payload.branch_id or 1)
-    branch_name = (payload.branch_name or "").strip() or "فرع تجريبي"
+
+    # Validate branch against the master branches table. The signup form must use
+    # an active branch from /api/v1/branches/public; sending an unknown id is a
+    # client error (no more silent fall-through to id=1).
+    requested_branch_id = int(payload.branch_id) if payload.branch_id is not None else None
+    if requested_branch_id is not None:
+        branch_row = db.query(Branch).filter(Branch.id == requested_branch_id).first()
+        if branch_row is None:
+            # Tolerate older clients: if the branches table is empty (fresh DB before
+            # init_db seeded), accept the legacy id=1 fallback only.
+            if requested_branch_id == 1 and db.query(Branch).count() == 0:
+                branch_id = 1
+                branch_name = (payload.branch_name or "").strip() or "فرع تجريبي"
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="الفرع المطلوب غير موجود. يرجى اختيار فرع من القائمة.",
+                )
+        elif not branch_row.is_active:
+            raise HTTPException(
+                status_code=400,
+                detail="هذا الفرع غير مفعل حالياً. اختر فرعاً آخر.",
+            )
+        else:
+            branch_id = branch_row.id
+            branch_name = branch_row.branch_name
+    else:
+        default_branch = (
+            db.query(Branch)
+            .filter(Branch.is_active.is_(True))
+            .order_by(Branch.id.asc())
+            .first()
+        )
+        if default_branch is not None:
+            branch_id = default_branch.id
+            branch_name = default_branch.branch_name
+        else:
+            branch_id = 1
+            branch_name = "فرع تجريبي"
     supervisor_id = payload.supervisor_id
     supervisor_name = (payload.supervisor_name or "").strip() or None
     if payload.role == "staff" and supervisor_id is None:

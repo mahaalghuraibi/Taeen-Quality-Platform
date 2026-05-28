@@ -27,6 +27,8 @@ def init_db() -> None:
         admin_request,
         ai_inference_log,
         audit_log,
+        branch,
+        branch_request,
         camera,
         dish_record,
         meal_type,
@@ -46,6 +48,7 @@ def init_db() -> None:
     _ensure_user_assignment_columns()
     _ensure_dish_review_columns()
     _ensure_default_tenant()
+    _seed_default_branches()
     _seed_meal_types()
 
 
@@ -289,6 +292,44 @@ def _ensure_user_assignment_columns() -> None:
         if changed:
             db.add_all(users)
             db.commit()
+    finally:
+        db.close()
+
+
+def _seed_default_branches() -> None:
+    """Seed initial branches matching the legacy hardcoded list (id 1/2/3).
+
+    Idempotent on every startup — runs on both SQLite (dev) and PostgreSQL (prod).
+    Existing rows with the same id are left untouched so admin edits persist.
+    """
+    from app.models.branch import Branch
+
+    defaults = [
+        (1, "فرع تجريبي", "الرياض"),
+        (2, "فرع الرياض", "الرياض"),
+        (3, "فرع جدة", "جدة"),
+    ]
+
+    db = SessionLocal()
+    try:
+        for branch_id, name, city in defaults:
+            existing = db.query(Branch).filter(Branch.id == branch_id).first()
+            if existing is not None:
+                continue
+            # Skip if a branch with the same name already exists under another id.
+            if db.query(Branch).filter(Branch.branch_name == name).first() is not None:
+                continue
+            db.add(
+                Branch(
+                    id=branch_id,
+                    tenant_id=1,
+                    branch_name=name,
+                    city=city,
+                    is_active=True,
+                    created_by_name="system",
+                )
+            )
+        db.commit()
     finally:
         db.close()
 

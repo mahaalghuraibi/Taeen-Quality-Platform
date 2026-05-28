@@ -4,6 +4,8 @@ from app.models.user import User  # noqa: F401
 from app.models.camera import Camera  # noqa: F401
 from app.models.dish_record import DishRecord  # noqa: F401
 from app.models.admin_request import AdminRequest  # noqa: F401
+from app.models.branch import Branch  # noqa: F401
+from app.models.branch_request import BranchRequest  # noqa: F401
 from app.models.meal_type import MealType  # noqa: F401
 from app.models.monitoring_alert import MonitoringAlert  # noqa: F401
 from app.models.system_setting import SystemSetting  # noqa: F401
@@ -16,6 +18,8 @@ __all__ = [
     "Camera",
     "DishRecord",
     "AdminRequest",
+    "Branch",
+    "BranchRequest",
     "MealType",
     "MonitoringAlert",
     "SystemSetting",

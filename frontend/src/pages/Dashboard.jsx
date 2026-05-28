@@ -5457,6 +5457,21 @@ export default function Dashboard() {
                       </Link>
                     </div>
                   </article>
+
+                  <article className="rounded-2xl border border-white/10 bg-[#0B1327]/70 p-4">
+                    <h4 className="text-sm font-semibold text-white">ز — إدارة الفروع</h4>
+                    <p className="mt-2 text-xs text-slate-400">
+                      إضافة فروع جديدة، تعديل الأسماء والمدن، تعطيل الفروع، ومراجعة طلبات الفروع الجديدة.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Link
+                        to="/admin/branches"
+                        className="inline-flex rounded-xl border border-brand-sky/40 bg-brand/15 px-4 py-2 text-xs font-semibold text-sky-100 transition hover:bg-brand/25"
+                      >
+                        فتح إدارة الفروع
+                      </Link>
+                    </div>
+                  </article>
                 </div>
               )}
             </section>

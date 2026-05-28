@@ -23,6 +23,7 @@ export const PUBLIC_PAGE_TITLES = {
   adminRequest: PLATFORM_BRAND.nameAr,
   adminUsers: PLATFORM_BRAND.nameAr,
   adminRequests: PLATFORM_BRAND.nameAr,
+  adminBranches: PLATFORM_BRAND.nameAr,
 };
 
 export function dashboardTitleForRole(role) {

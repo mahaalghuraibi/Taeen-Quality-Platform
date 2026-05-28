@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { apiUrl } from "../config/apiBase.js";
 import SKALogo from "../components/SKALogo.jsx";
@@ -12,11 +12,11 @@ import {
   logAuthFailure,
 } from "../utils/authApiError.js";
 
-const BRANCH_OPTIONS = [
-  { id: 1, name: "فرع تجريبي" },
-  { id: 2, name: "فرع الرياض" },
-  { id: 3, name: "فرع جدة" },
-];
+/** Sentinel select value used to open the "Request New Branch" dialog. */
+const REQUEST_BRANCH_VALUE = "__request_new__";
+
+/** Fallback used only if the public branches endpoint is unreachable. */
+const FALLBACK_BRANCHES = [{ id: 1, branch_name: "فرع تجريبي", city: "الرياض", is_active: true }];
 
 function UserIcon({ className }) {
   return (
@@ -111,17 +111,51 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [role, setRole] = useState("staff");
-  const [branchId, setBranchId] = useState(1);
+  const [branchId, setBranchId] = useState(null);
+  const [branches, setBranches] = useState([]);
+  const [branchesLoading, setBranchesLoading] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showSuccess, setShowSuccess] = useState(false);
+  const [requestModalOpen, setRequestModalOpen] = useState(false);
+  const [requestSuccess, setRequestSuccess] = useState("");
   const inFlightRef = useRef(false);
 
   useEffect(() => {
     document.title = PUBLIC_PAGE_TITLES.signup;
   }, []);
+
+  const loadBranches = useCallback(async () => {
+    setBranchesLoading(true);
+    try {
+      void wakeApiBeforeAuth();
+      const res = await fetchWithTimeout(
+        apiUrl("/api/v1/branches/public"),
+        { headers: { Accept: "application/json" } },
+        AUTH_FETCH_TIMEOUT_MS,
+      );
+      const data = await res.json().catch(() => null);
+      if (res.ok && Array.isArray(data) && data.length > 0) {
+        setBranches(data);
+        setBranchId((current) => current ?? data[0].id);
+      } else {
+        setBranches(FALLBACK_BRANCHES);
+        setBranchId((current) => current ?? FALLBACK_BRANCHES[0].id);
+      }
+    } catch (err) {
+      console.warn("[Register] failed to load branches:", err);
+      setBranches(FALLBACK_BRANCHES);
+      setBranchId((current) => current ?? FALLBACK_BRANCHES[0].id);
+    } finally {
+      setBranchesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadBranches();
+  }, [loadBranches]);
 
   function validate() {
     const safeEmail = email.trim().toLowerCase();
@@ -149,7 +183,12 @@ export default function RegisterPage() {
 
     const safeEmail = email.trim().toLowerCase();
     const safeName = name.trim();
-    const selectedBranch = BRANCH_OPTIONS.find((b) => b.id === Number(branchId)) || BRANCH_OPTIONS[0];
+    const selectedBranch =
+      branches.find((b) => b.id === Number(branchId)) || branches[0] || FALLBACK_BRANCHES[0];
+    if (!selectedBranch) {
+      setError("الفرع غير متوفر. حدّث الصفحة وحاول مرة أخرى.");
+      return;
+    }
 
     inFlightRef.current = true;
     setLoading(true);
@@ -164,7 +203,7 @@ export default function RegisterPage() {
         tenantId: 1,
         fullName: safeName,
         branchId: selectedBranch.id,
-        branchName: selectedBranch.name,
+        branchName: selectedBranch.branch_name,
       });
 
       const res = await fetchWithTimeout(
@@ -400,20 +439,55 @@ export default function RegisterPage() {
                       <select
                         id="branch_id"
                         name="branch_id"
-                        value={branchId}
-                        onChange={(e) => setBranchId(Number(e.target.value))}
+                        value={branchId == null ? "" : String(branchId)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === REQUEST_BRANCH_VALUE) {
+                            setRequestModalOpen(true);
+                            return;
+                          }
+                          setBranchId(Number(val));
+                        }}
+                        disabled={branchesLoading}
                         dir="rtl"
                         className={`${selectBase} text-start`}
                       >
-                        {BRANCH_OPTIONS.map((branch) => (
-                          <option key={branch.id} value={branch.id}>
-                            {branch.name}
-                          </option>
-                        ))}
+                        {branchesLoading ? (
+                          <option value="">جاري تحميل الفروع…</option>
+                        ) : (
+                          <>
+                            {branches.map((branch) => (
+                              <option key={branch.id} value={branch.id}>
+                                {branch.branch_name}
+                                {branch.city ? ` — ${branch.city}` : ""}
+                              </option>
+                            ))}
+                            <option value={REQUEST_BRANCH_VALUE}>+ طلب فرع جديد…</option>
+                          </>
+                        )}
                       </select>
                     </div>
+                    <p className="mt-1.5 text-[11px] text-slate-500">
+                      لا تجد فرعك في القائمة؟{" "}
+                      <button
+                        type="button"
+                        onClick={() => setRequestModalOpen(true)}
+                        className="font-semibold text-brand-sky transition hover:text-sky-300 hover:underline"
+                      >
+                        أرسل طلب لإضافته
+                      </button>
+                    </p>
                   </div>
                 </div>
+
+                {requestSuccess ? (
+                  <div
+                    className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-200"
+                    role="status"
+                  >
+                    {requestSuccess}
+                  </div>
+                ) : null}
 
                 <div>
                   <button
@@ -454,6 +528,201 @@ export default function RegisterPage() {
           navigate("/login", { replace: true });
         }}
       />
+
+      <BranchRequestModal
+        open={requestModalOpen}
+        defaultEmail={email}
+        defaultName={name}
+        onClose={() => setRequestModalOpen(false)}
+        onSubmitted={(submittedName) => {
+          setRequestModalOpen(false);
+          setRequestSuccess(
+            `تم إرسال طلب إضافة "${submittedName}" — سيراجعه المسؤول وستظهر القائمة محدّثة لاحقاً.`,
+          );
+        }}
+      />
+    </div>
+  );
+}
+
+function BranchRequestModal({ open, defaultName, defaultEmail, onClose, onSubmitted }) {
+  const [branchName, setBranchName] = useState("");
+  const [city, setCity] = useState("");
+  const [contactName, setContactName] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (open) {
+      setBranchName("");
+      setCity("");
+      setReason("");
+      setContactName(defaultName || "");
+      setContactEmail(defaultEmail || "");
+      setErr("");
+    }
+  }, [open, defaultName, defaultEmail]);
+
+  if (!open) return null;
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setErr("");
+    const trimmedBranch = branchName.trim();
+    const trimmedName = contactName.trim();
+    const trimmedEmail = contactEmail.trim().toLowerCase();
+    if (trimmedBranch.length < 2) {
+      setErr("اسم الفرع يجب أن يكون حرفين على الأقل.");
+      return;
+    }
+    if (!trimmedName) {
+      setErr("الاسم مطلوب.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setErr("أدخل بريداً إلكترونياً صالحاً.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetchWithTimeout(
+        apiUrl("/api/v1/branches/requests"),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({
+            branch_name: trimmedBranch,
+            city: city.trim() || null,
+            reason: reason.trim() || null,
+            requested_by_name: trimmedName,
+            requested_by_email: trimmedEmail,
+          }),
+        },
+        AUTH_FETCH_TIMEOUT_MS,
+      );
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 201 || res.status === 200) {
+        onSubmitted?.(trimmedBranch);
+        return;
+      }
+      const detail = typeof data?.detail === "string" ? data.detail : "";
+      setErr(detail || "تعذر إرسال الطلب. حاول مرة أخرى.");
+    } catch (e2) {
+      setErr(formatFetchError(e2, "تعذر إرسال الطلب. تحقق من الاتصال."));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl border border-white/12 bg-[#0f172a] p-5 shadow-[0_25px_50px_-28px_rgba(0,0,0,0.85)]"
+        onClick={(e) => e.stopPropagation()}
+        dir="rtl"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-bold text-white">طلب إضافة فرع جديد</h2>
+            <p className="mt-1 text-xs text-slate-400">
+              سيُراجَع طلبك من قبل المسؤول. ستتمكن من اختيار الفرع بعد الموافقة.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="إغلاق"
+            className="rounded-md p-1 text-slate-400 transition hover:bg-white/5 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+
+        {err ? (
+          <div className="mt-3 rounded-lg border border-accent-red/40 bg-accent-red/10 px-3 py-2 text-sm text-red-200">
+            {err}
+          </div>
+        ) : null}
+
+        <form className="mt-4 space-y-3" onSubmit={handleSubmit} noValidate>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-300">اسم الفرع *</label>
+            <input
+              type="text"
+              value={branchName}
+              onChange={(e) => setBranchName(e.target.value)}
+              required
+              className="w-full rounded-lg border border-white/12 bg-[#020617]/80 px-3 py-2 text-sm text-white focus:border-brand-sky/45 focus:outline-none focus:ring-2 focus:ring-brand/25"
+              placeholder="مثال: فرع الدمام"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-300">المدينة</label>
+            <input
+              type="text"
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+              className="w-full rounded-lg border border-white/12 bg-[#020617]/80 px-3 py-2 text-sm text-white focus:border-brand-sky/45 focus:outline-none focus:ring-2 focus:ring-brand/25"
+            />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-slate-300">اسمك *</label>
+              <input
+                type="text"
+                value={contactName}
+                onChange={(e) => setContactName(e.target.value)}
+                required
+                className="w-full rounded-lg border border-white/12 bg-[#020617]/80 px-3 py-2 text-sm text-white focus:border-brand-sky/45 focus:outline-none focus:ring-2 focus:ring-brand/25"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-slate-300">بريدك الإلكتروني *</label>
+              <input
+                type="email"
+                value={contactEmail}
+                onChange={(e) => setContactEmail(e.target.value)}
+                required
+                dir="ltr"
+                className="w-full rounded-lg border border-white/12 bg-[#020617]/80 px-3 py-2 text-sm text-white focus:border-brand-sky/45 focus:outline-none focus:ring-2 focus:ring-brand/25"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-300">سبب الطلب</label>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={3}
+              className="w-full resize-none rounded-lg border border-white/12 bg-[#020617]/80 px-3 py-2 text-sm text-white focus:border-brand-sky/45 focus:outline-none focus:ring-2 focus:ring-brand/25"
+              placeholder="اختياري"
+            />
+          </div>
+          <div className="mt-2 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/5"
+            >
+              إلغاء
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="rounded-lg bg-brand px-4 py-2 text-xs font-semibold text-white shadow-brand/35 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {submitting ? "جاري الإرسال…" : "إرسال الطلب"}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
