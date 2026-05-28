@@ -5,6 +5,7 @@ import { ACCESS_TOKEN_KEY } from "../constants.js";
 import SKALogo from "../components/SKALogo.jsx";
 import { PUBLIC_PAGE_TITLES } from "../constants/branding.js";
 import { apiUrl } from "../config/apiBase.js";
+import { riyadhYmd } from "../utils/reportDatePresets.js";
 
 const ADMIN_REQUESTS_URL = apiUrl("/api/v1/admin-requests");
 
@@ -114,7 +115,7 @@ export default function AdminRequestsPage() {
       setToast({ variant: "error", text: "لا توجد صفوف للتصدير في هذا العرض." });
       return;
     }
-    const today = new Date().toISOString().slice(0, 10);
+    const today = riyadhYmd();
     const filename = `ska-admin-requests-${statusFilter}-${today}.xlsx`;
     const rows = [
       ["طلبات الحساب الإداري"],

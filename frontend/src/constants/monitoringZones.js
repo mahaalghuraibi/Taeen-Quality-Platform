@@ -62,22 +62,21 @@ export function alertsForZone(zone, alerts) {
   return list.filter((a) => alertMatchesZone(zone, a));
 }
 
+// Dates here are derived from naive-UTC `created_at` strings produced by the
+// backend. We must (a) parse them as UTC and (b) format the calendar day in
+// Asia/Riyadh, otherwise a 22:00 UTC alert is counted on the wrong day.
+import { parseDishRecordedAt } from "../utils/datetime.js";
+import { riyadhDateKey } from "../utils/dishRecordsDisplay.js";
+
+/** Today's YYYY-MM-DD in Asia/Riyadh. */
 export function todayIsoDateLocal() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return riyadhDateKey(new Date());
 }
 
 export function isAlertToday(alert, ymdToday) {
   const raw = alert?.created_at || alert?.createdAt;
   if (!raw) return false;
-  const t = new Date(raw).getTime();
-  if (Number.isNaN(t)) return false;
-  const d = new Date(t);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}` === ymdToday;
+  const d = parseDishRecordedAt(raw);
+  if (Number.isNaN(d.getTime())) return false;
+  return riyadhDateKey(d) === ymdToday;
 }

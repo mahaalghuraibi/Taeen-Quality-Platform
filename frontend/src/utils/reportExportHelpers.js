@@ -3,6 +3,7 @@
  */
 
 import { canonicalViolationType, getViolationLabel } from "./violationLabels.js";
+import { riyadhYmd } from "./reportDatePresets.js";
 
 export const REPORT_PLATFORM_TITLE_AR = "عين الجودة";
 export const REPORT_PLATFORM_TAGLINE_AR = "المنصة الذكية لمراقبة معايير الجودة في المطابخ";
@@ -38,7 +39,7 @@ export function formatReportPeriodLabel(dateFrom, dateTo) {
 }
 
 export function formatReportDateYmd() {
-  return new Date().toISOString().slice(0, 10);
+  return riyadhYmd();
 }
 
 export function taeenReportFilename(suffix) {

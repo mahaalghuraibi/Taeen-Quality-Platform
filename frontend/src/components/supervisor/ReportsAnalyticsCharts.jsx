@@ -16,6 +16,8 @@ import {
 } from "recharts";
 
 import { getViolationLabel } from "../../utils/violationLabels.js";
+import { parseDishRecordedAt } from "../../utils/datetime.js";
+import { riyadhDateKey } from "../../utils/dishRecordsDisplay.js";
 
 const CHART_COLORS = ["#38bdf8", "#34d399", "#fbbf24", "#f87171", "#a78bfa", "#fb923c", "#2dd4bf"];
 
@@ -276,16 +278,23 @@ function ReportsAnalyticsCharts({ violationsRows, reviewRecords, dateFrom, dateT
   }, [filteredViolations]);
 
   const timeSeriesData = useMemo(() => {
-    const bucketFormat = (d) => {
-      const dt = new Date(d);
+    // Bucket alerts by calendar day/week/month in Asia/Riyadh. The previous
+    // implementation used local-time `getFullYear/getMonth/getDate`, which on
+    // a non-Riyadh device would shift a late-night violation into the next
+    // day. We now derive Y-M-D from the Riyadh calendar key.
+    const bucketFormat = (raw) => {
+      const dt = parseDishRecordedAt(raw);
       if (!Number.isFinite(dt.getTime())) return "";
-      const y = dt.getFullYear();
-      const m = String(dt.getMonth() + 1).padStart(2, "0");
-      const day = String(dt.getDate()).padStart(2, "0");
+      const ymd = riyadhDateKey(dt); // "YYYY-MM-DD" in Asia/Riyadh
+      if (!ymd) return "";
+      const [y, m, day] = ymd.split("-");
       if (alertGranularity === "day") return `${y}-${m}-${day}`;
       if (alertGranularity === "week") {
-        const oneJan = new Date(dt.getFullYear(), 0, 1);
-        const week = Math.ceil(((dt - oneJan) / 86400000 + oneJan.getDay() + 1) / 7);
+        // Week-of-year based on the Riyadh calendar date.
+        const utcMid = new Date(Date.UTC(Number(y), Number(m) - 1, Number(day)));
+        const oneJan = new Date(Date.UTC(Number(y), 0, 1));
+        const dayOfYear = Math.floor((utcMid - oneJan) / 86400000) + 1;
+        const week = Math.ceil((dayOfYear + oneJan.getUTCDay()) / 7);
         return `${y}-W${String(week).padStart(2, "0")}`;
       }
       return `${y}-${m}`;

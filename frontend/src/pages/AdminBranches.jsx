@@ -5,6 +5,7 @@ import { ACCESS_TOKEN_KEY } from "../constants.js";
 import { apiUrl } from "../config/apiBase.js";
 import SKALogo from "../components/SKALogo.jsx";
 import { PUBLIC_PAGE_TITLES } from "../constants/branding.js";
+import { formatSaudiDateTime } from "../utils/datetime.js";
 
 const BRANCHES_URL = apiUrl("/api/v1/branches");
 const BRANCH_REQUESTS_URL = apiUrl("/api/v1/branches/requests");
@@ -25,20 +26,9 @@ function parseApiDetail(detail) {
   return "";
 }
 
-function formatDate(iso) {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString("ar-SA", {
-      year: "numeric",
-      month: "short",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
+// All branches display dates in Asia/Riyadh — the backend returns naive UTC
+// timestamps which `formatSaudiDateTime` parses as UTC then formats for AST.
+const formatDate = formatSaudiDateTime;
 
 export default function AdminBranchesPage() {
   const token = localStorage.getItem(ACCESS_TOKEN_KEY) || "";
