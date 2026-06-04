@@ -1,8 +1,11 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_serializer
 
 from app.security.stream_url import redact_stream_url_for_response
+
+SecurityStatus = Literal["safe", "review", "danger"]
 
 
 class SupervisorCameraCreate(BaseModel):
@@ -31,11 +34,28 @@ class SupervisorCameraOut(BaseModel):
     tenant_id: int
     last_analysis_at: datetime | None = None
     analysis_mode: str = "basic"
+    security_status: SecurityStatus = "safe"
+    security_status_ar: str = "آمن"
+    security_warnings: list[str] = Field(default_factory=list)
+    security_host_kind: str = "unknown"
 
     @field_serializer("stream_url")
     @classmethod
     def _redact_supervisor_stream_url(cls, v: str | None) -> str | None:
         return redact_stream_url_for_response(v)
+
+
+class CameraSecurityAssessIn(BaseModel):
+    stream_url: str | None = Field(default=None, max_length=500)
+    username: str | None = Field(default=None, max_length=255)
+    password: str | None = Field(default=None, max_length=255)
+
+
+class CameraSecurityAssessOut(BaseModel):
+    security_status: SecurityStatus
+    security_status_ar: str
+    security_warnings: list[str] = Field(default_factory=list)
+    security_host_kind: str = "unknown"
 
 
 class SupervisorAlertOut(BaseModel):

@@ -110,6 +110,11 @@ import {
   validateRestaurantCameraDraft,
   mergeRestaurantCameraDefaults,
 } from "../lib/restaurantCameraStorage.js";
+import {
+  assessCameraStreamUrl,
+  securityStatusBadgeClass,
+  CAMERA_SECURITY,
+} from "../utils/cameraSecurity.js";
 
 /** Merge API `avatar_url` / `avatar_data_url` for UI + `<img src>`. */
 function normalizeStaffMeUser(body) {
@@ -1212,6 +1217,27 @@ export default function Dashboard() {
     username: "",
     password: "",
   });
+
+  const newCameraSecurityAssess = useMemo(() => {
+    let streamUrl = (newCameraForm.stream_url || "").trim() || null;
+    const u = (newCameraForm.username || "").trim();
+    const p = (newCameraForm.password || "").trim();
+    if (streamUrl && u) {
+      try {
+        const url = new URL(streamUrl);
+        url.username = u;
+        if (p) url.password = p;
+        streamUrl = url.toString();
+      } catch {
+        if (streamUrl.includes("://")) {
+          const [proto, rest] = streamUrl.split("://", 2);
+          streamUrl = `${proto}://${u}${p ? `:${p}` : ""}@${rest}`;
+        }
+      }
+    }
+    return assessCameraStreamUrl(streamUrl, { username: u, password: p });
+  }, [newCameraForm.stream_url, newCameraForm.username, newCameraForm.password]);
+
   const [monitoringAnalysisResult, setMonitoringAnalysisResult] = useState(null);
   const [monitoringAnalyzeLoading, setMonitoringAnalyzeLoading] = useState(false);
   const [monitoringLastAnalyzedAt, setMonitoringLastAnalyzedAt] = useState(null);
@@ -3099,8 +3125,21 @@ export default function Dashboard() {
         setToast({ type: "error", text: "تعذر إضافة الكاميرا." });
         return;
       }
+      const sec = assessCameraStreamUrl(streamUrl, { username: u, password: p });
       setNewCameraForm({ name: "", location: "", stream_url: "", username: "", password: "" });
-      setToast({ type: "success", text: "تمت إضافة الكاميرا. سيتم تفعيل كل فحوصات السلامة تلقائياً." });
+      if (sec.security_status === CAMERA_SECURITY.DANGER) {
+        setToast({
+          type: "error",
+          text: `تم حفظ الكاميرا — حالة أمان: خطر. ${sec.security_warnings[0] || "راجع إعدادات الشبكة."}`,
+        });
+      } else if (sec.security_status === CAMERA_SECURITY.REVIEW) {
+        setToast({
+          type: "success",
+          text: `تمت إضافة الكاميرا (أمان: يحتاج مراجعة). ${sec.security_warnings[0] || ""}`,
+        });
+      } else {
+        setToast({ type: "success", text: "تمت إضافة الكاميرا. سيتم تفعيل كل فحوصات السلامة تلقائياً." });
+      }
       await loadSupervisorCameras();
     } catch {
       setToast({ type: "error", text: "تعذر إضافة الكاميرا." });
@@ -4503,9 +4542,29 @@ export default function Dashboard() {
                       />
                     </label>
                   </div>
+                  {newCameraSecurityAssess.security_warnings?.length > 0 ? (
+                    <div
+                      className={`mt-3 space-y-1 rounded-xl border px-3 py-2 text-[11px] ${securityStatusBadgeClass(
+                        newCameraSecurityAssess.security_status,
+                      )}`}
+                    >
+                      <p className="font-bold">
+                        أمان الشبكة: {newCameraSecurityAssess.security_status_ar}
+                      </p>
+                      <ul className="list-inside list-disc opacity-95">
+                        {newCameraSecurityAssess.security_warnings.map((w) => (
+                          <li key={w}>{w}</li>
+                        ))}
+                      </ul>
+                      <p className="text-[10px] opacity-80">
+                        الكاميرات يجب أن تبقى داخل شبكة المطعم المحلية — لا تفتح RTSP على الإنترنت العام.
+                      </p>
+                    </div>
+                  ) : null}
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
                     <p className="text-[10px] text-slate-600">
-                      يمكنك ترك رابط البث فارغاً لإنشاء سجل الكاميرا قبل ربطها بالخادم.
+                      يمكنك ترك رابط البث فارغاً لإنشاء سجل الكاميرا قبل ربطها بالخادم. راجع{" "}
+                      <span className="text-sky-400/90">docs/CAMERA_SECURITY_AR.md</span> لفريق IT.
                     </p>
                     <button
                       type="button"
@@ -4709,13 +4768,22 @@ export default function Dashboard() {
                         >
                           <div className="flex flex-wrap items-start justify-between gap-2 border-b border-white/5 pb-2">
                             <p className="text-sm font-semibold text-white">{c.name}</p>
-                            <span
-                              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                c.is_connected ? "bg-emerald-500/15 text-emerald-200" : "bg-slate-600/30 text-slate-400"
-                              }`}
-                            >
-                              {c.is_connected ? "🟢 متصل" : "🔴 غير متصل"}
-                            </span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span
+                                className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${securityStatusBadgeClass(
+                                  c.security_status || "review",
+                                )}`}
+                              >
+                                {c.security_status_ar || "يحتاج مراجعة"}
+                              </span>
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                  c.is_connected ? "bg-emerald-500/15 text-emerald-200" : "bg-slate-600/30 text-slate-400"
+                                }`}
+                              >
+                                {c.is_connected ? "🟢 متصل" : "🔴 غير متصل"}
+                              </span>
+                            </div>
                           </div>
                           <div className="mt-3 grid gap-1.5 sm:grid-cols-2">
                             <p>

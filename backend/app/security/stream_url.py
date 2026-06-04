@@ -6,6 +6,8 @@ from urllib.parse import urlparse, urlunparse
 
 from fastapi import HTTPException, status
 
+from app.security.stream_url_crypto import decrypt_stream_url_from_storage, encrypt_stream_url_for_storage
+
 
 def redact_stream_url_for_response(url: str | None) -> str | None:
     """
@@ -14,7 +16,7 @@ def redact_stream_url_for_response(url: str | None) -> str | None:
     """
     if url is None:
         return None
-    s = str(url).strip()
+    s = decrypt_stream_url_from_storage(str(url).strip()) or str(url).strip()
     if not s:
         return None
     lower = s.lower()
@@ -80,3 +82,9 @@ def validate_camera_stream_url(url: str | None, *, max_len: int = 500) -> str | 
                 detail="رابط RTSP غير صالح.",
             ) from exc
     return s
+
+
+def prepare_stream_url_for_storage(url: str | None, *, max_len: int = 500) -> str | None:
+    """Validate then encrypt for database storage (never log return value)."""
+    validated = validate_camera_stream_url(url, max_len=max_len)
+    return encrypt_stream_url_for_storage(validated)

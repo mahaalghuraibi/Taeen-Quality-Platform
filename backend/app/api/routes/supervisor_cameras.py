@@ -10,8 +10,11 @@ from app.db.session import get_db
 from app.models.camera import Camera
 from app.models.monitoring_alert import MonitoringAlert
 from app.models.user import User
-from app.security.stream_url import validate_camera_stream_url
+from app.security.camera_security import assess_camera_stream_url, assess_stored_camera
+from app.security.stream_url import prepare_stream_url_for_storage
 from app.schemas.supervisor_camera import (
+    CameraSecurityAssessIn,
+    CameraSecurityAssessOut,
     SupervisorAlertOut,
     SupervisorCameraCreate,
     SupervisorCameraOut,
@@ -42,6 +45,8 @@ def _ensure_supervisor_branch(current_user: User) -> None:
 
 
 def _camera_to_out(camera: Camera) -> SupervisorCameraOut:
+    sec = assess_stored_camera(camera)
+    sec_d = sec.to_dict()
     return SupervisorCameraOut(
         id=camera.id,
         name=camera.name,
@@ -52,6 +57,7 @@ def _camera_to_out(camera: Camera) -> SupervisorCameraOut:
         tenant_id=camera.tenant_id,
         last_analysis_at=getattr(camera, "last_analysis_at", None),
         analysis_mode="basic",
+        **sec_d,
     )
 
 
@@ -71,6 +77,27 @@ def _alert_to_out(row: MonitoringAlert) -> SupervisorAlertOut:
         resolved_at=row.resolved_at,
         resolved_by=row.resolved_by_name,
         image_data_url=row.image_data_url,
+    )
+
+
+@router.post("/cameras/security-assess", response_model=CameraSecurityAssessOut)
+def assess_camera_security(
+    payload: CameraSecurityAssessIn,
+    current_user: User = Depends(get_current_user),
+) -> CameraSecurityAssessOut:
+    """Evaluate RTSP/network exposure before save (no credentials logged)."""
+    _ensure_supervisor_branch(current_user)
+    result = assess_camera_stream_url(
+        payload.stream_url,
+        username=payload.username,
+        password=payload.password,
+    )
+    d = result.to_dict()
+    return CameraSecurityAssessOut(
+        security_status=d["security_status"],
+        security_status_ar=d["security_status_ar"],
+        security_warnings=d["security_warnings"],
+        security_host_kind=d["security_host_kind"],
     )
 
 
@@ -94,7 +121,7 @@ def create_supervisor_camera(
     cam = Camera(
         name=payload.name.strip(),
         location=payload.location.strip(),
-        stream_url=validate_camera_stream_url(payload.stream_url),
+        stream_url=prepare_stream_url_for_storage(payload.stream_url),
         is_active=bool(payload.is_connected),
         ai_enabled=bool(payload.ai_enabled),
         tenant_id=current_user.tenant_id,
@@ -121,7 +148,7 @@ def update_supervisor_camera(
     if payload.location is not None:
         cam.location = payload.location.strip()
     if payload.stream_url is not None:
-        cam.stream_url = validate_camera_stream_url(payload.stream_url)
+        cam.stream_url = prepare_stream_url_for_storage(payload.stream_url)
     if payload.is_connected is not None:
         cam.is_active = bool(payload.is_connected)
     if payload.ai_enabled is not None:

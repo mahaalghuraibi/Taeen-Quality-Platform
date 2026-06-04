@@ -9,6 +9,10 @@ import {
   resolveStoredPassword,
   validateRestaurantCameraDraft,
 } from "../../lib/restaurantCameraStorage.js";
+import {
+  assessRestaurantCameraDraft,
+  securityStatusBadgeClass,
+} from "../../utils/cameraSecurity.js";
 
 /**
  * tierBorderClass — left border accent for the camera card.
@@ -98,6 +102,10 @@ function RestaurantCameraCard({
   const effectiveRtspSaved = useMemo(() => getEffectiveRtspUrl(config, ""), [config]);
 
   const validationErrors = validateRestaurantCameraDraft(draft);
+  const securityLive = useMemo(
+    () => assessRestaurantCameraDraft(draft, config),
+    [draft, config],
+  );
   const canSave = validationErrors.length === 0;
 
   let connectionLedLine = "🔴 غير متصل";
@@ -132,6 +140,14 @@ function RestaurantCameraCard({
           ) : null}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
+          <span
+            className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${securityStatusBadgeClass(
+              securityLive.security_status,
+            )}`}
+            title={securityLive.security_warnings?.join(" · ") || ""}
+          >
+            أمان الشبكة: {securityLive.security_status_ar}
+          </span>
           <span className="text-[11px] font-semibold text-slate-200">{connectionLedLine}</span>
           <span
             className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
@@ -336,6 +352,18 @@ function RestaurantCameraCard({
             <ul className="list-inside list-disc text-[11px] text-amber-200/95">
               {validationErrors.map((err) => (
                 <li key={err}>{err}</li>
+              ))}
+            </ul>
+          ) : null}
+
+          {securityLive.security_warnings?.length > 0 ? (
+            <ul
+              className={`space-y-1 rounded-lg border px-3 py-2 text-[11px] ${securityStatusBadgeClass(
+                securityLive.security_status,
+              )}`}
+            >
+              {securityLive.security_warnings.map((w) => (
+                <li key={w}>{w}</li>
               ))}
             </ul>
           ) : null}

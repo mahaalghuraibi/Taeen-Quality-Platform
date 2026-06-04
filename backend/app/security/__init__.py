@@ -1,1 +1,1 @@
-"""Security helpers (URL redaction, validation)."""
+"""Security helpers (URL redaction, validation, camera network assessment)."""
