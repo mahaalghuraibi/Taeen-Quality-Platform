@@ -104,12 +104,21 @@ import {
 } from "../constants/monitoringZones.js";
 import {
   RESTAURANT_CONNECTION_TYPES,
-  loadRestaurantCameraConfigs,
-  persistRestaurantCameraConfigs,
-  prepareSavePayload,
   validateRestaurantCameraDraft,
   mergeRestaurantCameraDefaults,
+  readLegacyLocalStorageConfigs,
+  clearLegacyLocalStorageConfigs,
+  legacyConfigsForImport,
+  apiZonesListToStoredMap,
+  apiZoneToStored,
+  draftToApiUpsert,
 } from "../lib/restaurantCameraStorage.js";
+import {
+  fetchZoneConfigs,
+  upsertZoneConfig,
+  patchZoneConnectionTest,
+  importLegacyZoneConfigs,
+} from "../services/monitoringZoneApi.js";
 import {
   assessCameraStreamUrl,
   securityStatusBadgeClass,
@@ -302,7 +311,6 @@ const staffGlassCard =
 const staffElevatedCard =
   `${staffGlassCard} border-white/12 shadow-[0_0_48px_-18px_rgba(56,189,248,0.16)] ring-1 ring-white/[0.05] hover:border-brand-sky/20`;
 
-const ADMIN_SETTINGS_STORAGE_KEY = "ska_admin_settings";
 const ADMIN_SETTINGS_DEFAULTS = {
   ai: {
     minConfidence: 70,
@@ -1266,9 +1274,9 @@ export default function Dashboard() {
   const [liveAnalysisError, setLiveAnalysisError] = useState("");
   /** Per-zone snapshot from last live tick for that zone (device preview shared until RTSP per slot) */
   const [liveSlotStates, setLiveSlotStates] = useState({});
-  /** Per-zone IP / RTSP / webcam connection UI (localStorage until backend CRUD exists). */
+  /** Per-zone IP / RTSP connection UI — persisted in PostgreSQL (monitoring_zone_configs). */
   const [restaurantCamConfigs, setRestaurantCamConfigs] = useState(() =>
-    loadRestaurantCameraConfigs(MONITORING_ZONE_DEFINITIONS),
+    mergeRestaurantCameraDefaults(MONITORING_ZONE_DEFINITIONS, {}),
   );
   const [cameraSetupBusy, setCameraSetupBusy] = useState({ test: null, save: null });
   const [detectResultModal, setDetectResultModal] = useState(null);
@@ -1347,17 +1355,6 @@ export default function Dashboard() {
   }, [toast, clearToast]);
 
   useEffect(() => {
-    // Hydrate from localStorage first (instant), then refresh from the DB-backed
-    // /api/v1/admin/settings endpoint (canonical). Unauthorized roles silently skip.
-    try {
-      const raw = localStorage.getItem(ADMIN_SETTINGS_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        setAdminSettings(normalizeAdminSettingsShape(parsed));
-      }
-    } catch {
-      /* ignore corrupt admin settings cache */
-    }
     let cancelled = false;
     (async () => {
       try {
@@ -1380,7 +1377,32 @@ export default function Dashboard() {
           setAdminSettings(normalizeAdminSettingsShape(nested));
         }
       } catch {
-        /* offline / 401 — keep localStorage values */
+        /* offline / 401 — keep in-memory defaults */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [getAccessToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const token = getAccessToken?.();
+      if (!token) return;
+      try {
+        const legacy = readLegacyLocalStorageConfigs();
+        if (legacy && Object.keys(legacy).length > 0) {
+          await importLegacyZoneConfigs(token, legacyConfigsForImport(legacy));
+          clearLegacyLocalStorageConfigs();
+        }
+        const data = await fetchZoneConfigs(token);
+        if (cancelled) return;
+        setRestaurantCamConfigs(apiZonesListToStoredMap(data.zones, MONITORING_ZONE_DEFINITIONS));
+      } catch {
+        if (!cancelled) {
+          setRestaurantCamConfigs(mergeRestaurantCameraDefaults(MONITORING_ZONE_DEFINITIONS, {}));
+        }
       }
     })();
     return () => {
@@ -1842,31 +1864,25 @@ export default function Dashboard() {
     const normalized = normalizeAdminSettingsShape(adminSettings);
     setAdminSettingsSaving(true);
     try {
-      localStorage.setItem(ADMIN_SETTINGS_STORAGE_KEY, JSON.stringify(normalized));
-      setAdminSettings(normalized);
       const token = getAccessToken?.();
-      if (token) {
-        try {
-          // Persist to PostgreSQL-backed system_settings (admin only).
-          const res = await fetch(apiUrl("/api/v1/admin/settings"), {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify(normalized),
-          });
-          if (res.ok) {
-            setToast({ type: "success", text: "تم حفظ الإعدادات على الخادم." });
-          } else {
-            setToast({ type: "success", text: "تم الحفظ محلياً (الخادم غير متاح حالياً)." });
-          }
-        } catch {
-          setToast({ type: "success", text: "تم الحفظ محلياً (الخادم غير متاح حالياً)." });
-        }
-      } else {
-        setToast({ type: "success", text: "تم حفظ إعدادات النظام محلياً." });
+      if (!token) {
+        setToast({ type: "error", text: "يجب تسجيل الدخول لحفظ الإعدادات." });
+        return;
       }
+      const res = await fetch(apiUrl("/api/v1/admin/settings"), {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(normalized),
+      });
+      if (!res.ok) {
+        setToast({ type: "error", text: "تعذر حفظ الإعدادات على الخادم." });
+        return;
+      }
+      setAdminSettings(normalized);
+      setToast({ type: "success", text: "تم حفظ الإعدادات على الخادم." });
     } catch {
       setToast({ type: "error", text: "تعذر حفظ الإعدادات." });
     } finally {
@@ -1874,15 +1890,35 @@ export default function Dashboard() {
     }
   }, [adminSettings, getAccessToken, setToast]);
 
-  const resetAdminSettings = useCallback(() => {
-    setAdminSettings(ADMIN_SETTINGS_DEFAULTS);
+  const resetAdminSettings = useCallback(async () => {
+    const normalized = normalizeAdminSettingsShape(ADMIN_SETTINGS_DEFAULTS);
+    setAdminSettingsSaving(true);
     try {
-      localStorage.setItem(ADMIN_SETTINGS_STORAGE_KEY, JSON.stringify(ADMIN_SETTINGS_DEFAULTS));
-      setToast({ type: "success", text: "تمت إعادة الإعدادات للوضع الافتراضي." });
+      const token = getAccessToken?.();
+      if (!token) {
+        setToast({ type: "error", text: "يجب تسجيل الدخول لإعادة ضبط الإعدادات." });
+        return;
+      }
+      const res = await fetch(apiUrl("/api/v1/admin/settings"), {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(normalized),
+      });
+      if (!res.ok) {
+        setToast({ type: "error", text: "تعذر إعادة ضبط الإعدادات على الخادم." });
+        return;
+      }
+      setAdminSettings(normalized);
+      setToast({ type: "success", text: "تمت إعادة الإعدادات للوضع الافتراضي على الخادم." });
     } catch {
-      setToast({ type: "error", text: "تعذر إعادة ضبط الإعدادات محلياً." });
+      setToast({ type: "error", text: "تعذر إعادة ضبط الإعدادات." });
+    } finally {
+      setAdminSettingsSaving(false);
     }
-  }, [setToast]);
+  }, [getAccessToken, setToast]);
 
   const reviewFiltersAreActive = useMemo(
     () =>
@@ -3453,27 +3489,32 @@ export default function Dashboard() {
   }, [stopMonitoringWebcam]);
 
   const handleRestaurantCameraSave = useCallback(
-    (zoneId, draft) => {
+    async (zoneId, draft) => {
       const zone = MONITORING_ZONE_DEFINITIONS.find((z) => z.id === zoneId);
       const errs = validateRestaurantCameraDraft(draft);
       if (errs.length) {
         setToast({ type: "error", text: errs[0] });
         return;
       }
+      const token = getAccessToken?.();
+      if (!token) {
+        setToast({ type: "error", text: "يجب تسجيل الدخول لحفظ إعدادات الكاميرا." });
+        return;
+      }
       setCameraSetupBusy((b) => ({ ...b, save: zoneId }));
       try {
-        setRestaurantCamConfigs((prev) => {
-          const payload = prepareSavePayload(draft, prev[zoneId], zone?.displayNameAr || "");
-          const next = { ...prev, [zoneId]: payload };
-          persistRestaurantCameraConfigs(next);
-          return next;
-        });
-        setToast({ type: "success", text: "تم حفظ إعدادات الكاميرا." });
+        const body = draftToApiUpsert(draft, restaurantCamConfigs[zoneId], zone?.displayNameAr || "");
+        const saved = await upsertZoneConfig(token, zoneId, body);
+        const stored = apiZoneToStored(saved);
+        setRestaurantCamConfigs((prev) => ({ ...prev, [zoneId]: stored }));
+        setToast({ type: "success", text: "تم حفظ إعدادات الكاميرا على الخادم." });
+      } catch {
+        setToast({ type: "error", text: "تعذر حفظ إعدادات الكاميرا." });
       } finally {
         setCameraSetupBusy((b) => ({ ...b, save: null }));
       }
     },
-    [setToast],
+    [getAccessToken, restaurantCamConfigs, setToast],
   );
 
   const handleRestaurantCameraTest = useCallback(
@@ -3509,14 +3550,31 @@ export default function Dashboard() {
           ok = true;
         }
 
-        setRestaurantCamConfigs((prev) => {
-          const defaults = mergeRestaurantCameraDefaults(MONITORING_ZONE_DEFINITIONS, prev);
-          const base = defaults[zoneId];
-          const updated = { ...base, lastConnectionTestAt: nowIso, lastConnectionTestOk: ok };
-          const next = { ...prev, [zoneId]: updated };
-          persistRestaurantCameraConfigs(next);
-          return next;
-        });
+        const token = getAccessToken?.();
+        if (token) {
+          try {
+            const saved = await patchZoneConnectionTest(token, zoneId, {
+              ok,
+              tested_at: nowIso,
+            });
+            const stored = apiZoneToStored(saved);
+            setRestaurantCamConfigs((prev) => ({ ...prev, [zoneId]: stored }));
+          } catch {
+            setRestaurantCamConfigs((prev) => {
+              const defaults = mergeRestaurantCameraDefaults(MONITORING_ZONE_DEFINITIONS, prev);
+              const base = defaults[zoneId];
+              const updated = { ...base, lastConnectionTestAt: nowIso, lastConnectionTestOk: ok };
+              return { ...prev, [zoneId]: updated };
+            });
+          }
+        } else {
+          setRestaurantCamConfigs((prev) => {
+            const defaults = mergeRestaurantCameraDefaults(MONITORING_ZONE_DEFINITIONS, prev);
+            const base = defaults[zoneId];
+            const updated = { ...base, lastConnectionTestAt: nowIso, lastConnectionTestOk: ok };
+            return { ...prev, [zoneId]: updated };
+          });
+        }
 
         const needsBackendNote =
           t === RESTAURANT_CONNECTION_TYPES.IP_CAMERA || t === RESTAURANT_CONNECTION_TYPES.RTSP_URL;
@@ -3533,7 +3591,7 @@ export default function Dashboard() {
         setCameraSetupBusy((b) => ({ ...b, test: null }));
       }
     },
-    [setToast],
+    [getAccessToken, setToast],
   );
 
   const handleStartRestaurantLiveMonitoring = useCallback(
@@ -5303,7 +5361,7 @@ export default function Dashboard() {
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3 border-b border-white/10 pb-3">
                 <div>
                   <h3 className="text-lg font-bold text-white">إعدادات النظام</h3>
-                  <p className="text-xs text-slate-400">هذه الإعدادات محلية على المتصفح الحالي فقط (localStorage).</p>
+                  <p className="text-xs text-slate-400">تُحفظ الإعدادات في PostgreSQL عبر الخادم.</p>
                 </div>
                 {role === "admin" ? (
                   <div className="flex gap-2">

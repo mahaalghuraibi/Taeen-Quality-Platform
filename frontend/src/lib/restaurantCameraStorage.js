@@ -1,9 +1,9 @@
 /**
- * Client-side camera configuration (interim). Replace with API persistence when backend is ready.
- * Passwords: stored obfuscated for RTSP URL rebuild only — not a security guarantee.
+ * Restaurant zone camera helpers — persistence is PostgreSQL via monitoringZoneApi.
+ * Legacy localStorage key kept only for one-time migration import.
  */
 
-const STORAGE_KEY = "ska_restaurant_camera_configs_v1";
+export const LEGACY_CAMERA_CONFIGS_STORAGE_KEY = "ska_restaurant_camera_configs_v1";
 
 export const RESTAURANT_CONNECTION_TYPES = {
   IP_CAMERA: "ip_camera",
@@ -111,8 +111,10 @@ export function maskIpv4Display(ip) {
   return `${a}.${b}.••`;
 }
 
-export function resolveStoredPassword(passwordEnc) {
-  return decodeSecret(passwordEnc || "");
+export function resolveStoredPassword(passwordEnc, hasPassword = false) {
+  if (passwordEnc) return decodeSecret(passwordEnc);
+  if (hasPassword) return "";
+  return "";
 }
 
 export function normalizePort(raw) {
@@ -160,6 +162,7 @@ export function mergeRestaurantCameraDefaults(zoneDefinitions, configs) {
       port: normalizePort(saved.port ?? 554),
       username: typeof saved.username === "string" ? saved.username : "",
       passwordEnc: saved.passwordEnc != null ? saved.passwordEnc : null,
+      hasPassword: Boolean(saved.hasPassword),
       streamPath: typeof saved.streamPath === "string" && saved.streamPath.trim()
         ? saved.streamPath
         : "/stream1",
@@ -173,26 +176,97 @@ export function mergeRestaurantCameraDefaults(zoneDefinitions, configs) {
   return out;
 }
 
-export function loadRestaurantCameraConfigs(zoneDefinitions) {
-  if (typeof window === "undefined") return mergeRestaurantCameraDefaults(zoneDefinitions, {});
+/** Read legacy browser configs (one-time migration only). */
+export function readLegacyLocalStorageConfigs() {
+  if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return mergeRestaurantCameraDefaults(zoneDefinitions, {});
+    const raw = window.localStorage.getItem(LEGACY_CAMERA_CONFIGS_STORAGE_KEY);
+    if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return mergeRestaurantCameraDefaults(zoneDefinitions, {});
-    return mergeRestaurantCameraDefaults(zoneDefinitions, parsed);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
   } catch {
-    return mergeRestaurantCameraDefaults(zoneDefinitions, {});
+    return null;
   }
 }
 
-export function persistRestaurantCameraConfigs(configsByZoneId) {
+export function clearLegacyLocalStorageConfigs() {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(configsByZoneId));
+    window.localStorage.removeItem(LEGACY_CAMERA_CONFIGS_STORAGE_KEY);
   } catch {
-    /* quota or private mode */
+    /* ignore */
   }
+}
+
+/** Map API zone row (snake_case) to UI stored shape (camelCase). */
+export function apiZoneToStored(zone) {
+  if (!zone || typeof zone !== "object") return {};
+  return {
+    cameraName: zone.camera_name || "",
+    ipAddress: zone.ip_address || "",
+    port: normalizePort(zone.port ?? 554),
+    username: zone.username || "",
+    passwordEnc: null,
+    hasPassword: Boolean(zone.has_password),
+    streamPath: zone.stream_path || "/stream1",
+    connectionType: zone.connection_type || RESTAURANT_CONNECTION_TYPES.IP_CAMERA,
+    rtspUrl: zone.rtsp_url || "",
+    savedAt: zone.saved_at || zone.updated_at || null,
+    lastConnectionTestAt: zone.last_connection_test_at || null,
+    lastConnectionTestOk:
+      typeof zone.last_connection_test_ok === "boolean" ? zone.last_connection_test_ok : null,
+    security_status: zone.security_status,
+    security_status_ar: zone.security_status_ar,
+    security_warnings: zone.security_warnings,
+    security_host_kind: zone.security_host_kind,
+  };
+}
+
+/** @param {Array<object>} zones API zones list */
+export function apiZonesListToStoredMap(zones, zoneDefinitions) {
+  const byId = {};
+  for (const z of zones || []) {
+    if (z?.zone_id) byId[z.zone_id] = apiZoneToStored(z);
+  }
+  return mergeRestaurantCameraDefaults(zoneDefinitions, byId);
+}
+
+/** Legacy localStorage camelCase → API import snake_case. */
+export function legacyConfigsForImport(parsed) {
+  const out = {};
+  for (const [zoneId, saved] of Object.entries(parsed || {})) {
+    if (!saved || typeof saved !== "object") continue;
+    out[zoneId] = {
+      camera_name: saved.cameraName,
+      ip_address: saved.ipAddress,
+      port: saved.port,
+      username: saved.username,
+      password_enc: saved.passwordEnc,
+      stream_path: saved.streamPath,
+      connection_type: saved.connectionType,
+      rtsp_url: saved.rtspUrl,
+    };
+  }
+  return out;
+}
+
+/** Draft form → API upsert body (snake_case). */
+export function draftToApiUpsert(draft, previousStored, zoneDefaultName) {
+  const passwordTrim = String(draft.passwordDraft || "").trim();
+  const nameTrim = String(draft.cameraName || "").trim();
+  return {
+    camera_name: nameTrim || zoneDefaultName || "",
+    connection_type: draft.connectionType || RESTAURANT_CONNECTION_TYPES.IP_CAMERA,
+    ip_address: String(draft.ipAddress || "").trim() || null,
+    port: normalizePort(draft.port),
+    username: String(draft.username || "").trim() || null,
+    password: passwordTrim || undefined,
+    clear_password: false,
+    stream_path: String(draft.streamPath || "").trim() || "/stream1",
+    rtsp_url: String(draft.rtspUrl || "").trim() || null,
+    linked_camera_id: previousStored?.linkedCameraId ?? null,
+  };
 }
 
 export function prepareSavePayload(draft, previousStored, zoneDefaultName) {
@@ -223,7 +297,7 @@ export function getEffectiveRtspUrl(config, passwordOverride = "") {
   const type = config.connectionType;
   const pass =
     String(passwordOverride || "").trim() ||
-    resolveStoredPassword(config.passwordEnc);
+    resolveStoredPassword(config.passwordEnc, config.hasPassword);
 
   if (type === RESTAURANT_CONNECTION_TYPES.RTSP_URL) {
     return String(config.rtspUrl || "").trim();

@@ -11,6 +11,7 @@ from app.models.monitoring_alert import MonitoringAlert  # noqa: F401
 from app.models.system_setting import SystemSetting  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.ai_inference_log import AIInferenceLog  # noqa: F401
+from app.models.monitoring_zone_config import MonitoringZoneConfig  # noqa: F401
 
 __all__ = [
     "Tenant",
@@ -25,4 +26,5 @@ __all__ = [
     "SystemSetting",
     "AuditLog",
     "AIInferenceLog",
+    "MonitoringZoneConfig",
 ]

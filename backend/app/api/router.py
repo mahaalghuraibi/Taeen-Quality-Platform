@@ -21,6 +21,7 @@ from app.api.routes.reports import router as reports_router
 from app.api.routes.supervisor_reviews import router as supervisor_reviews_router
 from app.api.routes.supervisor_dashboard import router as supervisor_dashboard_router
 from app.api.routes.supervisor_cameras import router as supervisor_cameras_router
+from app.api.routes.monitoring_zone_configs import router as monitoring_zone_configs_router
 from app.api.routes.users import router as users_router
 from app.api.routes.users_me import router as users_me_router
 
@@ -41,6 +42,7 @@ api_router.include_router(reports_router)
 api_router.include_router(supervisor_dashboard_router)
 api_router.include_router(supervisor_reviews_router)
 api_router.include_router(supervisor_cameras_router)
+api_router.include_router(monitoring_zone_configs_router)
 api_router.include_router(users_router)
 api_router.include_router(admin_settings_router)
 api_router.include_router(mask_detection_router)

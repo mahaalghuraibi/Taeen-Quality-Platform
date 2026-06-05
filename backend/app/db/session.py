@@ -33,6 +33,7 @@ def init_db() -> None:
         dish_record,
         meal_type,
         monitoring_alert,
+        monitoring_zone_config,
         system_setting,
         tenant,
         user,

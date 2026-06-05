@@ -1,7 +1,7 @@
 # معمارية قاعدة البيانات — منصة عين الجودة
 
 > **DATABASE_ARCHITECTURE_AR.md**  
-> الإصدار: 1.0 · يونيو 2026 · نتيجة تدقيق كامل للكود والمخطط الحي  
+> الإصدار: 1.1 · يونيو 2026 · محدّث بعد هجرة مناطق الكاميرا إلى PostgreSQL  
 > المحرك الإنتاجي: **PostgreSQL** · التطوير المحلي: **SQLite** (`sqlite:///./test.db`)
 
 ---
@@ -12,7 +12,7 @@
 2. [حالة الهجرة](#2-حالة-الهجرة)
 3. [أين تُخزَّن البيانات الحرجة؟](#3-أين-تُخزَّن-البيانات-الحرجة)
 4. [مصفوفة الميزات → الجداول](#4-مصفوفة-الميزات--الجداول)
-5. [جداول PostgreSQL النشطة (12)](#5-جداول-postgresql-النشطة-12)
+5. [جداول PostgreSQL النشطة (13)](#5-جداول-postgresql-النشطة-13)
 6. [مخطط ER (علاقات الكيانات)](#6-مخطط-er-علاقات-الكيانات)
 7. [تخزين خارج PostgreSQL](#7-تخزين-خارج-postgresql)
 8. [نتائج فحص Excel / CSV / JSON / SQLite](#8-نتائج-فحص-excel--csv--json--sqlite)
@@ -26,34 +26,34 @@
 
 | البند | النتيجة |
 |-------|---------|
-| عدد جداول SQLAlchemy النشطة | **12** |
+| عدد جداول SQLAlchemy النشطة | **13** |
 | محرك الإنتاج (Render) | **PostgreSQL** عبر `DATABASE_URL` |
 | محرك التطوير المحلي | SQLite (`backend/.env` → `sqlite:///./test.db`) |
 | Excel كقاعدة بيانات | **لا** — تصدير فقط (`.xlsx` يُولَّد من بيانات API) |
 | CSV كقاعدة بيانات | **لا** — أُزيل من الواجهة؛ بقايا اسم ملف في helper قديم |
 | JSON كتخزين دائم للأعمال | **لا** — JSON داخل أعمدة PostgreSQL (`system_settings.value`, `audit_logs.metadata_json`) |
 | SQLite في الإنتاج | **لا** — محلي فقط |
-| بيانات أعمال حرجة خارج PG | **جزئياً** — انظر [§7](#7-تخزين-خارج-postgresql) |
+| بيانات أعمال حرجة خارج PG | **لا** — تكوين الإنتاج بالكامل في PG (انظر [§7](#7-تخزين-خارج-postgresql)) |
 
-**الخلاصة:** جميع الكيانات التجارية الأساسية (مستخدمون، فروع، كاميرات API، مخالفات، أطباق، إعدادات، تدقيق) في **PostgreSQL**. يوجد تخزين مؤقت/مساعد في المتصفح (`localStorage`) وملفات وسائط على القرص.
+**الخلاصة:** جميع الكيانات التجارية الأساسية (مستخدمون، فروع، كاميرات، مناطق المراقبة، مخالفات، أطباق، إعدادات، تدقيق) في **PostgreSQL**. المتصفح يحتفظ بـ JWT للجلسة فقط؛ ملفات الوسائط على القرص مقصودة.
 
 ---
 
 ## 2. حالة الهجرة
 
-### الحكم: **مُهاجَر جزئياً (Partially migrated) — ~92%**
+### الحكم: **مُهاجَر بالكامل (Fully migrated) — 100%**
 
 | الفئة | الحالة |
 |-------|--------|
 | مستخدمون، فروع، مخالفات، أطباق، كاميرات (API) | ✅ 100% PostgreSQL |
-| إعدادات الإدارة (canonical) | ✅ PostgreSQL (`system_settings`) + cache محلي |
+| إعدادات مناطق الكاميرا (kitchen / storage / prep) | ✅ PostgreSQL (`monitoring_zone_configs`) |
+| إعدادات الإدارة | ✅ PostgreSQL (`system_settings`) فقط |
 | سجلات التدقيق والذكاء الاصطناعي | ✅ PostgreSQL |
-| صور الأطباق (ملفات) | ⚠️ ملفات على القرص + metadata في `dish_records` |
-| إعدادات مناطق الكاميرا (3 zones) | ⚠️ `localStorage` مؤقت — API جاهز |
+| صور الأطباق (ملفات) | ⚠️ ملفات على القرص + metadata في `dish_records` (مقصود) |
 | نماذج YOLO | ⚠️ ملفات `.pt` على القرص / HuggingFace (ليس بيانات أعمال) |
 | Excel / PDF / تقارير | ✅ تُولَّد عند الطلب من PostgreSQL — ليست قاعدة بيانات |
 
-**للوصول إلى 100%:** نقل `ska_restaurant_camera_configs_v1` من `localStorage` إلى جدول `cameras` عبر `/api/v1/supervisor/cameras` (مهمة frontend v2).
+**تقرير الهجرة:** `CAMERA_ZONE_MIGRATION_AR.md`
 
 ---
 
@@ -65,7 +65,7 @@
 | **بيانات الفروع** | PostgreSQL | `branches` | القائمة الرسمية للفروع النشطة |
 | **طلبات فروع جديدة** | PostgreSQL | `branch_requests` | موافقة المدير |
 | **بيانات الكاميرات (API)** | PostgreSQL | `cameras` | `stream_url` مشفّر (`enc:v1:`) |
-| **إعدادات كاميرا المناطق (UI)** | `localStorage` مؤقت | `ska_restaurant_camera_configs_v1` | يُفضَّل الاعتماد على `cameras` |
+| **إعدادات كاميرا المناطق (3 zones)** | PostgreSQL | `monitoring_zone_configs` | IP/RTSP/كلمة مرور مشفّرة على الخادم |
 | **المخالفات / التنبيهات** | PostgreSQL | `monitoring_alerts` | لا يوجد جدول `violations` منفصل |
 | **سجلات الأطباق** | PostgreSQL | `dish_records` | metadata الصورة في `image_url` |
 | **ملفات صور الأطباق** | قرص السيرفر | `backend/media/dishes/` | المسار عبر `DISH_MEDIA_DIR` |
@@ -88,6 +88,7 @@
 | **الفروع** | `branches` | `GET/POST/PATCH /api/v1/branches` |
 | طلب فرع جديد | `branch_requests` | `POST /api/v1/branches/requests` |
 | **الكاميرات** | `cameras` | `GET/POST/PATCH /api/v1/supervisor/cameras` |
+| **مناطق المراقبة (CCTV)** | `monitoring_zone_configs` | `GET/PUT /api/v1/supervisor/zone-configs` |
 | تقييم أمان الكاميرا | — (مشتق) | `POST .../cameras/security-assess` |
 | **المخالفات / التنبيهات** | `monitoring_alerts` | `GET /api/v1/supervisor/alerts` |
 | تحليل إطار مباشر | `monitoring_alerts`, `ai_inference_logs` | `POST /api/v1/monitoring/analyze-frame` |
@@ -104,7 +105,7 @@
 
 ---
 
-## 5. جداول PostgreSQL النشطة (12)
+## 5. جداول PostgreSQL النشطة (13)
 
 ### 5.1 `tenants` — المستأجرون / المنشآت
 
@@ -189,7 +190,31 @@
 
 ---
 
-### 5.6 `monitoring_alerts` — المخالفات والتنبيهات
+### 5.6 `monitoring_zone_configs` — إعدادات مناطق الكاميرا (CCTV)
+
+| العمود | النوع | الغرض |
+|--------|-------|--------|
+| `id` | PK | |
+| `tenant_id` | FK → `tenants.id` | |
+| `branch_id` | Integer | `0` = افتراضي؛ وإلا فرع المشرف |
+| `zone_id` | String(32) | `kitchen` · `storage` · `prep` |
+| `camera_name` | String(255) | |
+| `connection_type` | String(32) | `ip_camera` · `rtsp_url` |
+| `ip_address`, `port`, `username` | | حقول IP |
+| `password_encrypted` | Text | Fernet `enc:v1:` |
+| `stream_path` | String(255) | |
+| `rtsp_url_encrypted`, `stream_url` | Text | روابط مشفّرة |
+| `linked_camera_id` | FK → `cameras.id` | اختياري |
+| `last_connection_test_*` | DateTime/Boolean | اختبار الاتصال |
+| `created_at`, `updated_at`, `updated_by_id` | | |
+
+**قيد:** `UNIQUE(tenant_id, branch_id, zone_id)`
+
+**الميزات:** بطاقات الكاميرا الثلاث في لوحة المشرف — بديل `ska_restaurant_camera_configs_v1`.
+
+---
+
+### 5.7 `monitoring_alerts` — المخالفات والتنبيهات
 
 | العمود | النوع | الغرض |
 |--------|-------|--------|
@@ -211,7 +236,7 @@
 
 ---
 
-### 5.7 `dish_records` — سجلات الأطباق
+### 5.8 `dish_records` — سجلات الأطباق
 
 | العمود | النوع | الغرض |
 |--------|-------|--------|
@@ -234,7 +259,7 @@
 
 ---
 
-### 5.8 `meal_types` — أنواع الوجبات
+### 5.9 `meal_types` — أنواع الوجبات
 
 | العمود | النوع | الغرض |
 |--------|-------|--------|
@@ -248,7 +273,7 @@
 
 ---
 
-### 5.9 `admin_requests` — طلبات حساب إداري
+### 5.10 `admin_requests` — طلبات حساب إداري
 
 | العمود | النوع | الغرض |
 |--------|-------|--------|
@@ -261,7 +286,7 @@
 
 ---
 
-### 5.10 `system_settings` — إعدادات النظام
+### 5.11 `system_settings` — إعدادات النظام
 
 | العمود | النوع | الغرض |
 |--------|-------|--------|
@@ -274,11 +299,11 @@
 
 **قيد:** `UNIQUE(tenant_id, key)`
 
-**الميزات:** إعدادات AI، التقارير، التنبيهات — بديل `localStorage`.
+**الميزات:** إعدادات AI، التقارير، التنبيهات — المصدر الوحيد للواجهة الإدارية.
 
 ---
 
-### 5.11 `audit_logs` — سجل التدقيق
+### 5.12 `audit_logs` — سجل التدقيق
 
 | العمود | النوع | الغرض |
 |--------|-------|--------|
@@ -295,7 +320,7 @@
 
 ---
 
-### 5.12 `ai_inference_logs` — سجل استدلال الذكاء الاصطناعي
+### 5.13 `ai_inference_logs` — سجل استدلال الذكاء الاصطناعي
 
 | العمود | النوع | الغرض |
 |--------|-------|--------|
@@ -386,6 +411,7 @@ erDiagram
 tenants (1) ──┬── users (N)
               ├── branches (N) ── branch_requests (N)
               ├── cameras (N) ──┬── monitoring_alerts (N)
+              │                 ├── monitoring_zone_configs (N)
               │                 └── ai_inference_logs (N)
               ├── dish_records (N)
               ├── system_settings (N)
@@ -409,6 +435,9 @@ monitoring_alerts ──< ai_inference_logs (alert_id)
 | `branch_requests.reviewed_by_id` | `users.id` |
 | `branch_requests.branch_id` | `branches.id` |
 | `cameras.tenant_id` | `tenants.id` |
+| `monitoring_zone_configs.tenant_id` | `tenants.id` |
+| `monitoring_zone_configs.linked_camera_id` | `cameras.id` |
+| `monitoring_zone_configs.updated_by_id` | `users.id` |
 | `dish_records.user_id` | `users.id` |
 | `dish_records.tenant_id` | `tenants.id` |
 | `dish_records.reviewed_by_id` | `users.id` |
@@ -431,17 +460,15 @@ monitoring_alerts ──< ai_inference_logs (alert_id)
 
 | الموقع | المفتاح / المسار | نوع البيانات | خطورة | الإجراء |
 |--------|------------------|--------------|--------|---------|
-| `localStorage` | `ska_restaurant_camera_configs_v1` | IP/RTSP/كلمة مرور منطقة | ⚠️ متوسطة | الهجرة إلى `cameras` (v2) |
-| `localStorage` | `ska_admin_settings` | cache إعدادات | ⚠️ منخفضة | المصدر: `system_settings` |
 | `localStorage` | `ska_access_token`, `ska_user_role` | جلسة JWT | ✅ مقبول | ليس قاعدة بيانات |
+| `localStorage` | `ska_restaurant_camera_configs_v1` | — | ✅ مُزال | هُجِّر إلى `monitoring_zone_configs` |
+| `localStorage` | `ska_admin_settings` | — | ✅ مُزال | المصدر: `system_settings` فقط |
 | قرص السيرفر | `media/dishes/*.jpg` | صور أطباق | ✅ مقصود | metadata في `dish_records.image_url` |
 | قرص السيرفر | `ml/models/*.pt` | أوزان YOLO | ✅ مقصود | ليس بيانات أعمال |
 | تصدير Excel | `*.xlsx` مؤقت | تقارير | ✅ مقصود | من PostgreSQL عند الطلب |
 | SQLite محلي | `backend/test.db` | تطوير فقط | ✅ dev | لا يُستخدم في Render prod |
 
-**لم يُجرَ ترحيل إضافي في هذا التدقيق** لأن:
-- جداول PostgreSQL والـ API موجودة بالفعل للكاميرات والإعدادات.
-- المتبقي هو تحديث الواجهة لإيقاف الاعتماد على `localStorage` كمصدر وحيد لمناطق الكاميرا.
+**هجرة يونيو 2026:** أُضيف جدول `monitoring_zone_configs` وواجهات `/zone-configs`؛ الواجهة تستورد تلقائياً من `ska_restaurant_camera_configs_v1` ثم تحذف المفتاح. انظر `CAMERA_ZONE_MIGRATION_AR.md`.
 
 ---
 
@@ -473,7 +500,7 @@ monitoring_alerts ──< ai_inference_logs (alert_id)
 | `system_settings.value` | **PostgreSQL** (JSON string) |
 | `audit_logs.metadata_json` | **PostgreSQL** |
 | `dish_records.ai_suggestions` | **PostgreSQL** |
-| `localStorage` JSON | متصفح — cache فقط |
+| `localStorage` JSON | JWT جلسة فقط (لا تكوين إنتاجي) |
 | `custom_food_classifier` label map | ملف قراءة فقط للـ ML |
 
 ### SQLite
@@ -494,6 +521,7 @@ monitoring_alerts ──< ai_inference_logs (alert_id)
 | `branches` | `/api/v1/branches/*` |
 | `branch_requests` | `/api/v1/branches/requests/*` |
 | `cameras` | `/api/v1/cameras`, `/api/v1/supervisor/cameras` |
+| `monitoring_zone_configs` | `/api/v1/supervisor/zone-configs` |
 | `monitoring_alerts` | `/api/v1/supervisor/alerts`, `/api/v1/monitoring/*` |
 | `dish_records` | `/api/v1/dishes`, `/api/v1/supervisor/reviews` |
 | `meal_types` | `/api/v1/meal-types` |
@@ -506,8 +534,7 @@ monitoring_alerts ──< ai_inference_logs (alert_id)
 
 ## 10. توصيات v2
 
-1. **إزالة `localStorage` لكاميرات المناطق** — استخدام `cameras` حصرياً.
-2. **جدول `report_exports` (اختياري)** — تتبع من صدّر ماذا ومتى.
+1. **جدول `report_exports` (اختياري)** — تتبع من صدّر ماذا ومتى.
 3. **Alembic migrations** — بديل `create_all` + هجرات SQLite اليدوية.
 4. **FK رسمي لـ `branch_id`** على `users` / `dish_records` / `monitoring_alerts`.
 5. **إزالة helper CSV legacy** من `reportExportHelpers.js`.
@@ -520,12 +547,12 @@ monitoring_alerts ──< ai_inference_logs (alert_id)
 - [x] فحص CSV كقاعدة بيانات — **غير موجود**
 - [x] فحص JSON دائم للأعمال — **PostgreSQL فقط** (+ cache متصفح)
 - [x] SQLite — **تطوير محلي فقط**
-- [x] إدراج 12 جدولاً نشطاً مع الأعمدة والعلاقات
+- [x] إدراج 13 جدولاً نشطاً مع الأعمدة والعلاقات
 - [x] مصفوفة Feature → Table
 - [x] مخطط ER
 - [x] تحديد مواقع: users, branches, cameras, violations, dishes
-- [x] حالة الهجرة: **Partially migrated (~92%)**
+- [x] حالة الهجرة: **Fully migrated (100%)** — `CAMERA_ZONE_MIGRATION_AR.md`
 
 ---
 
-**مراجع:** `DATABASE_MIGRATION_AR.md` · `CAMERA_SECURITY_AR.md` · `backend/app/models/`
+**مراجع:** `CAMERA_ZONE_MIGRATION_AR.md` · `CAMERA_SECURITY_AR.md` · `backend/app/models/`
