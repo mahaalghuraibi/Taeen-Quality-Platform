@@ -58,4 +58,11 @@ export default [
       "no-duplicate-imports": "warn",
     },
   },
+  {
+    // Node-side build/tooling scripts use Node globals (console, process, …).
+    files: ["scripts/**/*.{js,mjs,cjs}", "*.config.{js,mjs,cjs}"],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
 ];

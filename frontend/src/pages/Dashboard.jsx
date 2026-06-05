@@ -26,7 +26,6 @@ import EditRecordModal from "../components/dish/EditRecordModal.jsx";
 import StaffProfileCard from "../components/staff/StaffProfileCard.jsx";
 import CameraCaptureSection from "../components/camera/CameraCaptureSection.jsx";
 import RestaurantCameraCard from "../components/monitoring/RestaurantCameraCard.jsx";
-import LiveMonitoringZoneCards from "../components/monitoring/LiveMonitoringZoneCards.jsx";
 import SupervisorExecutiveHero from "../components/supervisor/SupervisorExecutiveHero.jsx";
 import SupervisorSummaryCards from "../components/supervisor/SupervisorSummaryCards.jsx";
 import SupervisorMonitoringOverview from "../components/supervisor/SupervisorMonitoringOverview.jsx";
@@ -1804,12 +1803,11 @@ export default function Dashboard() {
   );
 
   const executiveBranchLabel = supervisorSummary?.branch_name?.trim() || PLATFORM_BRAND.nameShortAr;
+  const connectedCamerasCount = cameraCards.filter(
+    (c) => c?.is_connected && String(c?.stream_url || c?.streamUrl || "").trim(),
+  ).length;
   const executiveLiveLabel =
-    monitoringWebcamOn && monitoringLiveAutoOn
-      ? "نشط — تحليل دوري"
-      : monitoringWebcamOn
-        ? "معاينة كاميرا الجهاز"
-        : "غير نشط";
+    connectedCamerasCount > 0 ? "المراقبة الذكية نشطة" : "بانتظار ربط الكاميرات";
   const executiveQualityLabel = supervisorSummaryLoading
     ? "…"
     : supervisorSummary?.quality_score != null
@@ -1829,7 +1827,9 @@ export default function Dashboard() {
             ? alertsError
             : apiStatusLabelAr(API_STATUS.ONLINE);
   const monitoringLiveLine =
-    monitoringWebcamOn && monitoringLiveAutoOn ? "تحليل لقطات نشط" : "بدون تحليل تلقائي فوري";
+    connectedCamerasCount > 0
+      ? "المراقبة الذكية تعمل على الكاميرات المتصلة"
+      : "لا توجد كاميرا متصلة بعد";
 
   const navLinks = useMemo(() => {
     if (role === "staff") {
@@ -3409,26 +3409,18 @@ export default function Dashboard() {
     const apiStreams = cameraCards.filter(
       (c) => c?.is_connected && String(c?.stream_url || c?.streamUrl || "").trim(),
     ).length;
-    const deviceLiveStream = monitoringWebcamOn && monitoringLiveAutoOn ? 1 : 0;
-    const connectedCams = apiStreams + deviceLiveStream;
     const people =
       supervisorSummary?.total_employees ??
       supervisorSummary?.active_employees_today ??
       "—";
     return {
       totalZones: MONITORING_ZONE_DEFINITIONS.length,
-      activeStreams: connectedCams,
+      activeStreams: apiStreams,
       violationsToday: todayAlerts.length,
       worstZoneLabel: worstN > 0 ? worstZone.zoneAr : "لا يوجد",
       peopleCount: people,
     };
-  }, [
-    alertsList,
-    cameraCards,
-    supervisorSummary,
-    monitoringWebcamOn,
-    monitoringLiveAutoOn,
-  ]);
+  }, [alertsList, cameraCards, supervisorSummary]);
 
   const resetLiveAnalysisState = useCallback((opts = {}) => {
     const { stopAuto = false } = opts;
@@ -4324,9 +4316,9 @@ export default function Dashboard() {
               className={`dashboard-section-cv ${SECTION_THEME.cameras} mb-8 scroll-mt-28 overflow-hidden !p-0 sm:scroll-mt-32`}
             >
               <div className="border-b border-white/10 bg-[#020617]/95 px-5 py-4">
-                <h3 className="text-lg font-bold text-white">مراقبة الكاميرات — {PLATFORM_BRAND.nameShortAr}</h3>
+                <h3 className="text-lg font-bold text-white">الكاميرات — {PLATFORM_BRAND.nameShortAr}</h3>
                 <p className="mt-1 text-xs text-slate-400">
-                  ثلاث مناطق تشغيل ثابتة (CAM-01 … CAM-03). التحليل عبر واجهات API الحالية؛ جاهزة لربط RTSP/IP مع خدمة البث.
+                  إضافة كاميرات المطعم وربطها بالمراقبة الذكية.
                 </p>
               </div>
 
@@ -4444,7 +4436,7 @@ export default function Dashboard() {
                       : apiStatusLabelAr(apiConnectionStatus)}
                     {apiConnectionStatus !== API_STATUS.ONLINE ? (
                       <span className="mt-1 block text-slate-500">
-                        يمكن تشغيل معاينة الكاميرا محلياً؛ التحليل الذكي يتطلب اتصال الخادم.
+                        المراقبة الذكية تتطلب اتصال الخادم.
                       </span>
                     ) : null}
                   </p>
@@ -4461,30 +4453,20 @@ export default function Dashboard() {
                 ) : null}
               </div>
 
-              <div className="grid gap-4 border-b border-white/10 bg-[#030712] px-4 py-5 sm:grid-cols-2 sm:px-5 lg:grid-cols-3">
-                {MONITORING_ZONE_DEFINITIONS.map((zone, idx) => {
+              <div className="border-b border-white/10 bg-[#030712] px-4 pt-5 sm:px-5">
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">مناطق المراقبة</p>
+                <p className="mb-3 text-[11px] text-slate-500">
+                  المطبخ، التخزين، التحضير — مع الكاميرا المرتبطة والفحوصات الذكية المفعّلة لكل منطقة.
+                </p>
+              </div>
+              <div className="grid gap-4 border-b border-white/10 bg-[#030712] px-4 pb-5 sm:grid-cols-2 sm:px-5 lg:grid-cols-3">
+                {MONITORING_ZONE_DEFINITIONS.map((zone) => {
                   const matched = findCameraForZone(zone, cameraCards);
                   const za = alertsForZone(zone, alertsList);
                   const openV = za.filter((a) => String(a?.status || "").toLowerCase() !== "resolved").length;
                   const cfg = mergedRestaurantCamConfigs[zone.id];
-                  const ct = cfg?.connectionType || RESTAURANT_CONNECTION_TYPES.IP_CAMERA;
-                  const ipOrRtsp =
-                    ct === RESTAURANT_CONNECTION_TYPES.IP_CAMERA ||
-                    ct === RESTAURANT_CONNECTION_TYPES.RTSP_URL;
-
-                  const streamConnected = monitoringWebcamOn && selectedMonitoringZoneId === zone.id;
 
                   const st = liveSlotStates[zone.id];
-                  let riskTier = st?.tier || "neutral";
-                  if (streamConnected && (riskTier === "neutral" || !st?.tier)) riskTier = "green";
-
-                  const connLabel = ipOrRtsp
-                    ? "منقطع — يتطلب خادم بث"
-                    : streamConnected
-                      ? monitoringLiveAutoOn
-                        ? "متصل — تحليل تلقائي"
-                        : "متصل — معاينة"
-                      : "منقطع";
 
                   const lastTestLabel = cfg?.lastConnectionTestAt
                     ? `${cfg.lastConnectionTestOk === true ? "✓ " : cfg.lastConnectionTestOk === false ? "✗ " : ""}${formatSaudiDateTime(cfg.lastConnectionTestAt)}`
@@ -4494,32 +4476,16 @@ export default function Dashboard() {
                     st?.lastAtLabel ||
                     (matched?.last_analysis_at ? formatSaudiDateTime(matched.last_analysis_at) : "—");
 
-                  const previewRefs = [livePrevKitchenRef, livePrevStorageRef, livePrevPrepRef];
-
                   return (
                     <RestaurantCameraCard
                       key={zone.id}
                       zone={zone}
                       config={cfg}
-                      riskTier={riskTier}
-                      connected={streamConnected}
-                      liveAnalyzing={
-                        streamConnected &&
-                        monitoringLiveAutoOn &&
-                        liveTickBusy &&
-                        selectedMonitoringZoneId === zone.id
-                      }
-                      connectionStatusLabel={connLabel}
                       lastConnectionTestLabel={lastTestLabel}
                       lastAnalysisLabel={lastAnalysisLabel}
-                      riskLevelLabel={st?.statusLabel || "—"}
                       activeViolationsCount={openV}
-                      peopleCount={typeof st?.peopleCount === "number" ? st.peopleCount : "—"}
-                      streamPreviewRef={previewRefs[idx]}
                       onSave={(draft) => void handleRestaurantCameraSave(zone.id, draft)}
                       onTestConnection={(draft) => void handleRestaurantCameraTest(zone.id, draft)}
-                      onStartLiveMonitoring={() => void handleStartRestaurantLiveMonitoring(zone.id)}
-                      onStopMonitoring={() => handleStopRestaurantLiveMonitoring(zone.id)}
                       testBusy={cameraSetupBusy.test === zone.id}
                       saveBusy={cameraSetupBusy.save === zone.id}
                     />
@@ -4528,20 +4494,13 @@ export default function Dashboard() {
               </div>
 
               <div className="flex flex-col gap-6 px-4 pb-6 pt-5 sm:px-6">
-                {/* Clean, enterprise-style add-camera form. All AI checks are auto-enabled
-                    on the backend — no per-camera toggles for the supervisor. */}
-                <div className="rounded-2xl border border-sky-500/15 bg-gradient-to-br from-[#0a1525]/80 to-[#060d1f]/80 p-5">
-                  <div className="mb-4 flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-white">إضافة كاميرا جديدة</p>
-                      <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
-                        كل كاميرا تُضاف هنا تُفعَّل عليها جميع فحوصات السلامة تلقائياً: الكمامة، القفازات، غطاء الرأس، الزي الرسمي، الأرضية المبللة، النفايات.
-                      </p>
-                    </div>
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                      تلقائي
-                    </span>
+                {/* Add-camera form — all smart checks are auto-enabled server-side. */}
+                <div className="rounded-2xl border border-white/10 bg-[#070f1f] p-5">
+                  <div className="mb-4">
+                    <p className="text-sm font-semibold text-white">إضافة كاميرا جديدة</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+                      تُفعَّل جميع فحوصات السلامة تلقائياً على كل كاميرا تُضاف.
+                    </p>
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="text-[11px] text-slate-400">
@@ -4565,7 +4524,7 @@ export default function Dashboard() {
                       />
                     </label>
                     <label className="text-[11px] text-slate-400 sm:col-span-2">
-                      رابط البث (RTSP أو IP)
+                      رابط RTSP أو IP
                       <input
                         type="text"
                         placeholder="rtsp://192.168.1.10:554/Streaming/Channels/101"
@@ -4619,11 +4578,10 @@ export default function Dashboard() {
                       </p>
                     </div>
                   ) : null}
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-[10px] text-slate-600">
-                      يمكنك ترك رابط البث فارغاً لإنشاء سجل الكاميرا قبل ربطها بالخادم. راجع{" "}
-                      <span className="text-sky-400/90">docs/CAMERA_SECURITY_AR.md</span> لفريق IT.
-                    </p>
+                  <p className="mt-3 text-[10px] leading-relaxed text-slate-500">
+                    يجب أن تكون الكاميرا داخل شبكة المطعم المحلية، ولا يتم كشف رابط RTSP على الإنترنت.
+                  </p>
+                  <div className="mt-3 flex justify-end">
                     <button
                       type="button"
                       onClick={() => void addSupervisorCamera()}
@@ -4635,161 +4593,6 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                <div
-                  ref={supervisorMonitoringAiRef}
-                  id="supervisor-monitoring-ai"
-                  className="rounded-xl border border-white/10 bg-[#060d1f]/50 p-4"
-                >
-                  <div className="mb-3 flex items-center justify-between gap-2">
-                    <p className="text-sm font-semibold text-white">مراقبة السلامة المباشرة</p>
-                    <span
-                      title="هذه واجهة لاختبار النموذج باستخدام كاميرا اللابتوب. الإنتاج النهائي يعتمد على كاميرات المراقبة (CCTV)."
-                      className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200"
-                    >
-                      <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                      وضع الاختبار — كاميرا الجهاز
-                    </span>
-                  </div>
-                  <p className="mb-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] leading-relaxed text-amber-200/80">
-                    قسم كاميرا الجهاز يُستخدم لاختبار وظائف الذكاء الاصطناعي فقط. المراقبة الإنتاجية تعمل عبر كاميرات المراقبة المتصلة من قسم «الكاميرات» أعلاه.
-                  </p>
-                  <label className="mb-1 block text-xs text-slate-500">منطقة المراقبة</label>
-                  <select
-                    value={selectedMonitoringZoneId}
-                    onChange={(e) => setSelectedMonitoringZoneId(e.target.value)}
-                    className="mb-3 w-full max-w-md rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-white"
-                  >
-                    {MONITORING_ZONE_DEFINITIONS.map((z) => (
-                      <option key={z.id} value={z.id}>
-                        {z.zoneAr} · {z.camCode}
-                      </option>
-                    ))}
-                  </select>
-                  <label className="mb-1 block text-xs text-slate-500">الكاميرا المرتبطة</label>
-                  <select
-                    value={monitoringCameraSelectId}
-                    onChange={(e) => setMonitoringCameraSelectId(e.target.value)}
-                    className="mb-4 w-full max-w-md rounded-xl border border-white/15 bg-[#0B1327]/80 px-3 py-2 text-sm text-white"
-                  >
-                    <option value="">بدون ربط بكاميرا</option>
-                    {cameraCards.map((c) => (
-                      <option key={c.id} value={String(c.id)}>
-                        {c.name} — {c.location}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="rounded-xl border border-emerald-500/25 bg-[#041014]/80 p-4">
-                    <p className="mb-3 text-sm font-semibold text-emerald-100">الكاميرا المباشرة</p>
-                    <LiveMonitoringZoneCards
-                      zones={MONITORING_ZONE_DEFINITIONS}
-                      selectedZoneId={selectedMonitoringZoneId}
-                      onSelectZone={(id) => setSelectedMonitoringZoneId(id)}
-                      slotStates={liveSlotStates}
-                      previewRefs={[livePrevKitchenRef, livePrevStorageRef, livePrevPrepRef]}
-                      liveAutoOn={monitoringLiveAutoOn}
-                      liveTickBusy={liveTickBusy}
-                    />
-                    <p className="mb-2 mt-3 text-[11px] text-slate-500">
-                      المنطقة النشطة:{" "}
-                      <span className="font-semibold text-slate-300">{selectedZoneMeta.zoneAr}</span>
-                    </p>
-                    <video
-                      ref={monitoringLiveVideoRef}
-                      className="mb-3 max-h-64 w-full rounded-lg border border-white/10 bg-black object-cover"
-                      playsInline
-                      muted
-                      autoPlay
-                    />
-                    <div className="mb-2 flex flex-wrap gap-2">
-                      {!monitoringWebcamOn ? (
-                        <button
-                          type="button"
-                          onClick={() => void startMonitoringWebcam()}
-                          className="rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-4 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500/25"
-                        >
-                          تشغيل كاميرا الجهاز
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={stopMonitoringWebcam}
-                          className="rounded-xl border border-white/20 bg-[#0B1327]/80 px-4 py-2 text-xs font-semibold text-slate-200"
-                        >
-                          إيقاف الكاميرا
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        disabled={!monitoringWebcamOn || monitoringLiveAutoOn}
-                        onClick={() => setMonitoringLiveAutoOn(true)}
-                        className="rounded-xl border border-violet-500/40 bg-violet-500/15 px-4 py-2 text-xs font-semibold text-violet-100 disabled:opacity-40"
-                      >
-                        بدء المراقبة التلقائية
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!monitoringLiveAutoOn}
-                        onClick={() => resetLiveAnalysisState({ stopAuto: true })}
-                        className="rounded-xl border border-white/20 bg-[#0B1327]/80 px-4 py-2 text-xs font-semibold text-slate-300 disabled:opacity-40"
-                      >
-                        إيقاف المراقبة
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!monitoringWebcamOn || monitoringWebcamBusy || monitoringAnalyzeLoading}
-                        onClick={() => void analyzeMonitoringWebcamFrame()}
-                        className="rounded-xl border border-brand-sky/40 bg-brand/15 px-4 py-2 text-xs font-semibold text-brand-sky disabled:opacity-50"
-                      >
-                        {monitoringWebcamBusy || monitoringAnalyzeLoading ? "جاري التحليل…" : "تحليل فوري"}
-                      </button>
-                      {(liveTickBusy || liveAnalysisError || monitoringAnalyzeLoading) && monitoringWebcamOn ? (
-                        <button
-                          type="button"
-                          onClick={() => resetLiveAnalysisState({ stopAuto: false })}
-                          className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs font-semibold text-amber-100"
-                        >
-                          إعادة الضبط
-                        </button>
-                      ) : null}
-                    </div>
-                    {monitoringLiveAutoOn && monitoringWebcamOn ? (
-                      <div className="mb-2 flex items-center gap-2 text-[11px] text-emerald-300/90">
-                        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-                        المراقبة التلقائية نشطة
-                      </div>
-                    ) : null}
-                    {liveAnalysisError ? (
-                      <p className="mb-2 text-[11px] text-red-300" role="alert">
-                        {liveAnalysisError}
-                      </p>
-                    ) : null}
-                    {monitoringWebcamError ? (
-                      <p className="mt-2 text-xs text-red-300">{monitoringWebcamError}</p>
-                    ) : null}
-                  </div>
-                  {monitoringLastAnalyzedAt ? (
-                    <p className="mt-2 text-[11px] text-slate-600">
-                      آخر فحص: {formatSaudiDateTime(monitoringLastAnalyzedAt)}
-                    </p>
-                  ) : null}
-                </div>
-
-                {/* آخر نتيجة تحليل — always visible once live is active or a result exists */}
-                {(monitoringAnalysisResult != null ||
-                  (monitoringLiveAutoOn && monitoringWebcamOn) ||
-                  monitoringWebcamBusy ||
-                  monitoringAnalyzeLoading) ? (
-                  <PpeStatusDashboard
-                    result={monitoringAnalysisResult}
-                    liveActive={monitoringLiveAutoOn && monitoringWebcamOn}
-                    liveTickBusy={liveTickBusy}
-                    manualLoading={monitoringAnalyzeLoading || monitoringWebcamBusy}
-                    zoneName={selectedZoneMeta.zoneAr}
-                    lastAnalyzedAt={monitoringLastAnalyzedAt}
-                    role={role}
-                  />
-                ) : null}
-
                 {cameraCardsLoading ? (
                   <div className="space-y-3" aria-busy="true">
                     <SkeletonPulse className="h-24 w-full" />
@@ -4798,11 +4601,6 @@ export default function Dashboard() {
                 ) : cameraCardsError ? (
                   <div className="rounded-xl border border-accent-red/35 bg-accent-red/10 px-3 py-4 text-sm text-red-200">
                     <p>{cameraCardsError}</p>
-                    {apiConnectionStatus !== API_STATUS.ONLINE ? (
-                      <p className="mt-2 text-xs text-slate-400">
-                        معاينة كاميرا الجهاز والتحليل الفوري متاحان عند عودة الخادم — لا حاجة لإعادة تحميل الصفحة بالكامل.
-                      </p>
-                    ) : null}
                   </div>
                 ) : cameraCards.length === 0 ? (
                   <EmptyState
@@ -4812,17 +4610,12 @@ export default function Dashboard() {
                   />
                 ) : (
                   <div className="space-y-2">
-                    <p className="text-xs font-medium text-slate-400">حالة الكاميرات</p>
-                    {cameraCards.some((c) => c?.is_connected && String(c?.stream_url || c?.streamUrl || "").trim()) ? null : (
-                      <div className="rounded-xl border border-dashed border-white/15 bg-[#0B1327]/50 px-3 py-4 text-center text-sm text-slate-400">
-                        لا يوجد بث مباشر متصل حاليًا
-                      </div>
-                    )}
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">الكاميرات المسجّلة</p>
                     <ExpandMoreList initialVisible={3} listClassName="space-y-2">
                       {cameraCards.map((c) => (
                         <article
                           key={c.id}
-                          className="rounded-xl border border-white/10 bg-[#0B1327] p-4 text-xs text-slate-200 transition hover:border-sky-500/25"
+                          className="rounded-xl border border-white/10 bg-[#0B1327] p-4 text-xs text-slate-200"
                         >
                           <div className="flex flex-wrap items-start justify-between gap-2 border-b border-white/5 pb-2">
                             <p className="text-sm font-semibold text-white">{c.name}</p>
@@ -4835,17 +4628,25 @@ export default function Dashboard() {
                                 {c.security_status_ar || "يحتاج مراجعة"}
                               </span>
                               <span
-                                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                  c.is_connected ? "bg-emerald-500/15 text-emerald-200" : "bg-slate-600/30 text-slate-400"
+                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                  c.is_connected
+                                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                                    : c.security_status && c.security_status !== "safe"
+                                      ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                                      : "border-slate-600 bg-slate-800/60 text-slate-400"
                                 }`}
                               >
-                                {c.is_connected ? "🟢 متصل" : "🔴 غير متصل"}
+                                {c.is_connected
+                                  ? "متصلة"
+                                  : c.security_status && c.security_status !== "safe"
+                                    ? "تحتاج مراجعة"
+                                    : "غير متصلة"}
                               </span>
                             </div>
                           </div>
                           <div className="mt-3 grid gap-1.5 sm:grid-cols-2">
                             <p>
-                              <span className="text-slate-500">الموقع:</span> {c.location}
+                              <span className="text-slate-500">المنطقة / الموقع:</span> {c.location}
                             </p>
                             <p>
                               <span className="text-slate-500">المراقبة الذكية:</span>{" "}
@@ -4856,7 +4657,7 @@ export default function Dashboard() {
                               )}
                             </p>
                             <p className="sm:col-span-2">
-                              <span className="text-slate-500">آخر تحليل:</span>{" "}
+                              <span className="text-slate-500">آخر فحص:</span>{" "}
                               {c.last_analysis_at ? formatSaudiDateTime(c.last_analysis_at) : "لا يوجد"}
                             </p>
                           </div>
