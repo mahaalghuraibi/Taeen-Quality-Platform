@@ -1,0 +1,15 @@
+# Validation images are local-only (may contain restaurant footage / faces).
+# Keep folder structure but never commit the images themselves.
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.bmp
+*.JPG
+*.JPEG
+*.PNG
+
+# Always keep structure + docs
+!.gitkeep
+!README_AR.md
+!.gitignore
