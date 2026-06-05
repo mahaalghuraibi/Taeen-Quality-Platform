@@ -1,0 +1,32 @@
+# ============================================================
+# عين الجودة — إعداد الوكيل المحلي (نموذج تشغيل)
+# هذا ملف افتراضي للتشغيل التجريبي. للإنتاج: عدّل القيم الحقيقية
+# ولا ترفع المفاتيح/كلمات مرور الكاميرات إلى Git.
+# ============================================================
+
+backend_url: "https://taeen-quality-platform.onrender.com"
+agent_api_key: "CHANGE_ME"
+branch_id: 1
+
+cameras:
+  - camera_id: 1
+    zone_id: "kitchen"
+    name: "Kitchen Camera"
+    rtsp_url: "rtsp://user:password@192.168.1.50:554/stream1"
+
+models:
+  ppe_model: "models/ppe_yolo.pt"
+  environment_model: "models/environment_yolo.pt"
+
+detection:
+  confidence_threshold: 0.45
+  frame_interval_seconds: 2
+  alert_cooldown_seconds: 60
+
+advanced:
+  device: "auto"
+  snapshot_dir: "snapshots"
+  request_timeout_seconds: 20
+  max_retries: 3
+  retry_backoff_seconds: 5
+  log_level: "INFO"

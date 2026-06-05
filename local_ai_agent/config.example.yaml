@@ -1,0 +1,50 @@
+# ============================================================
+# عين الجودة — إعداد الوكيل المحلي (Local AI Agent)
+# انسخ هذا الملف إلى config.yaml ثم عدّل القيم.
+#   cp config.example.yaml config.yaml
+# لا ترفع config.yaml إلى Git (يحتوي على بيانات كاميرات وRTSP).
+# ============================================================
+
+# عنوان الخادم السحابي (HTTPS إلزامي في الإنتاج)
+backend_url: "https://taeen-quality-platform.onrender.com"
+
+# المفتاح السري المشترك مع الخادم (AGENT_API_KEY على الخادم)
+agent_api_key: "CHANGE_ME"
+
+# رقم الفرع لهذا الجهاز المحلي
+branch_id: 1
+
+# الكاميرات داخل شبكة المطعم المحلية (RTSP/IP فقط)
+cameras:
+  - camera_id: 1
+    zone_id: "kitchen"
+    name: "Kitchen Camera"
+    rtsp_url: "rtsp://user:password@192.168.1.50:554/stream1"
+  - camera_id: 2
+    zone_id: "storage"
+    name: "Storage Camera"
+    rtsp_url: "rtsp://user:password@192.168.1.51:554/stream1"
+  - camera_id: 3
+    zone_id: "prep"
+    name: "Prep Camera"
+    rtsp_url: "rtsp://user:password@192.168.1.52:554/stream1"
+
+# نموذجا YOLO — يُحلّلان نفس الإطار في نفس الدورة
+models:
+  ppe_model: "models/ppe_yolo.pt"            # قفازات، كمامة، غطاء رأس، زي رسمي
+  environment_model: "models/environment_yolo.pt"  # أرضية مبللة، نفايات، اتساخ، ممر مسدود، منطقة خطرة
+
+# إعدادات الكشف
+detection:
+  confidence_threshold: 0.45     # الحد الأدنى للثقة (0–1)
+  frame_interval_seconds: 2      # الفاصل بين كل دورة تحليل
+  alert_cooldown_seconds: 60     # منع تكرار نفس المخالفة لنفس الكاميرا
+
+# إعدادات متقدمة (اختيارية)
+advanced:
+  device: "auto"                 # auto | cuda | cpu
+  snapshot_dir: "snapshots"      # حفظ لقطات مؤقتة محلياً
+  request_timeout_seconds: 20
+  max_retries: 3                 # إعادة المحاولة عند تعذّر الخادم
+  retry_backoff_seconds: 5
+  log_level: "INFO"              # DEBUG | INFO | WARNING | ERROR

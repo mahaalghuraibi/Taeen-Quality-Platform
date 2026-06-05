@@ -1,0 +1,18 @@
+# Production config with real credentials (copy from config.example.yaml locally)
+# config.yaml is committed as a safe template; override on the restaurant PC.
+
+# Model weights (large binaries — deploy separately)
+models/*.pt
+models/*.onnx
+
+# Runtime snapshots and logs
+snapshots/
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/

@@ -107,6 +107,17 @@ class Settings:
     MONITORING_IMAGE_DATA_URL_MAX_CHARS: int = int(os.getenv("MONITORING_IMAGE_DATA_URL_MAX_CHARS", "400000"))
     # Production AI mode: stricter validation, real photos only, no demo paths.
     PRODUCTION_AI_MODE: bool = _parse_bool_env("PRODUCTION_AI_MODE", False)
+    # Local AI Agent (on-prem YOLO) → backend alert ingestion.
+    # Shared secret the agent must send in the X-Agent-Key header. Empty disables the endpoint.
+    AGENT_API_KEY: str = os.getenv("AGENT_API_KEY", "").strip()
+    # Evidence snapshots pushed by the local agent. Render: mount a persistent disk here.
+    AGENT_EVIDENCE_DIR: Path = Path(
+        os.getenv("AGENT_EVIDENCE_DIR", str(_backend_dir / "media" / "agent_evidence")),
+    ).resolve()
+    # Max evidence image size accepted from the agent (decoded bytes).
+    AGENT_EVIDENCE_MAX_BYTES: int = int(os.getenv("AGENT_EVIDENCE_MAX_BYTES", str(6 * 1024 * 1024)))
+    # Server-side duplicate-alert cooldown (seconds) per camera+violation_type for agent alerts.
+    AGENT_ALERT_COOLDOWN_SECONDS: int = int(os.getenv("AGENT_ALERT_COOLDOWN_SECONDS", "60"))
     # TrustedHostMiddleware — comma-separated hosts; empty disables host validation (typical behind nginx).
     ALLOWED_HOSTS_RAW: str = os.getenv("ALLOWED_HOSTS", "").strip()
     # Send Strict-Transport-Security only when the API is reachable exclusively via HTTPS.
