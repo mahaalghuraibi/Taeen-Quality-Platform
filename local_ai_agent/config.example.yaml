@@ -29,9 +29,14 @@ cameras:
     name: "Prep Camera"
     rtsp_url: "rtsp://user:password@192.168.1.52:554/stream1"
 
-# نموذجا YOLO — يُحلّلان نفس الإطار في نفس الدورة
+# نماذج YOLO — تُحلَّل جميعها على نفس الإطار في نفس الدورة
 models:
-  ppe_model: "models/ppe_yolo.pt"            # قفازات، كمامة، غطاء رأس، زي رسمي
+  # نماذج PPE متعددة (كل ملف لغرض واحد). يمكنك إضافة/حذف ملفات حسب المتوفّر.
+  ppe_models:
+    - "models/mask_best.pt"      # الكمامة (no_mask)
+    - "models/glove_best.pt"     # القفازات (no_gloves)
+    - "models/hairnet_best.pt"   # غطاء الرأس (no_hairnet -> no_headcover)
+  # نموذج البيئة اختياري — إن لم يوجد الملف يستمر الوكيل بكشف PPE فقط دون تعطّل
   environment_model: "models/environment_yolo.pt"  # أرضية مبللة، نفايات، اتساخ، ممر مسدود، منطقة خطرة
 
 # إعدادات الكشف

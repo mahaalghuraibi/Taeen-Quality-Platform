@@ -68,10 +68,13 @@
 في **كل دورة** لكل كاميرا:
 
 1. يُقرأ إطار واحد من RTSP.
-2. يُمرَّر **نفس الإطار** على نموذج PPE → يكشف: `no_gloves`, `no_mask`, `no_headcover`, `improper_uniform`.
-3. يُمرَّر **نفس الإطار** على نموذج البيئة → يكشف: `wet_floor`, `trash_on_floor`, `unclean_area`, `blocked_path`, `unsafe_area`.
-4. يُدمَج الناتجان — إطار واحد قد ينتج **عدة مخالفات في آن واحد**.
+2. يُمرَّر **نفس الإطار** على نماذج PPE المتوفّرة (ملف لكل غرض) → يكشف مثلاً: `no_mask` (mask_best.pt)، `no_gloves` (glove_best.pt)، `no_headcover` (hairnet_best.pt).
+3. يُمرَّر **نفس الإطار** على نموذج البيئة (اختياري) → يكشف: `wet_floor`, `trash_on_floor`, `unclean_area`, `blocked_path`, `unsafe_area`.
+4. تُدمَج النواتج — إطار واحد قد ينتج **عدة مخالفات في آن واحد**.
 5. لكل مخالفة فوق عتبة الثقة: لقطة دليل + إرسال إلى الخادم.
+
+> نموذج البيئة اختياري: إذا كان `environment_yolo.pt` غير موجود يستمر الوكيل بكشف PPE فقط دون تعطّل.
+> لفحص الجاهزية وطباعة `model.names`: `python agent.py --readiness` (يكتب `reports/LOCAL_YOLO_READINESS_AR.md`).
 
 ---
 
@@ -239,8 +242,10 @@ local_ai_agent/
 ├── install_windows_ar.md
 ├── install_linux_ar.md
 ├── models/
-│   ├── ppe_yolo.pt       # ضع أوزان PPE هنا
-│   └── environment_yolo.pt
+│   ├── mask_best.pt          # PPE: الكمامة (no_mask)
+│   ├── glove_best.pt         # PPE: القفازات (no_gloves)
+│   ├── hairnet_best.pt       # PPE: غطاء الرأس (no_hairnet → no_headcover)
+│   └── environment_yolo.pt   # اختياري: أرضية مبللة/نفايات/اتساخ/ممر مسدود/منطقة خطرة
 └── snapshots/            # لقطات مؤقتة (تُنشأ تلقائياً)
 ```
 

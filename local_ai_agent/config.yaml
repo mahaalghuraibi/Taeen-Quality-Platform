@@ -15,7 +15,12 @@ cameras:
     rtsp_url: "rtsp://user:password@192.168.1.50:554/stream1"
 
 models:
-  ppe_model: "models/ppe_yolo.pt"
+  # نماذج PPE متعددة — كل ملف لغرض واحد، وتُحلَّل جميعها على نفس الإطار
+  ppe_models:
+    - "models/mask_best.pt"      # الكمامة (no_mask)
+    - "models/glove_best.pt"     # القفازات (no_gloves)
+    - "models/hairnet_best.pt"   # غطاء الرأس (no_hairnet -> no_headcover)
+  # نموذج البيئة اختياري — إن لم يوجد يستمر الوكيل بكشف PPE فقط
   environment_model: "models/environment_yolo.pt"
 
 detection:

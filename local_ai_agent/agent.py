@@ -7,10 +7,15 @@ Runs YOLO violation detection on RTSP cameras INSIDE the restaurant LAN and
 pushes only structured alerts + evidence snapshots to the cloud backend.
 
 Pipeline (per camera, per cycle):
-    RTSP frame ─┬─► PPE / person model  (gloves, mask, headcover, uniform)
+    RTSP frame ─┬─► PPE model(s)        (mask, gloves, headcover, … one file each)
                 └─► environment model   (wet_floor, trash, unclean, blocked, unsafe)
-    Both models analyze the SAME frame in the SAME cycle, so one frame can
-    produce multiple simultaneous violations.
+    All available models analyze the SAME frame in the SAME cycle, so one frame
+    can produce multiple simultaneous violations.
+
+    PPE detection supports MULTIPLE single-purpose model files (e.g. mask_best.pt,
+    glove_best.pt, hairnet_best.pt) — each is loaded and run on every frame.
+    The environment model is OPTIONAL: if environment_yolo.pt is missing the agent
+    keeps running with PPE detection only (it never crashes for a missing env model).
 
 Security:
     * RTSP URLs / camera credentials stay in local config.yaml only.
@@ -25,6 +30,7 @@ Usage:
     python agent.py --test-backend  # verify backend URL + agent_api_key
     python agent.py --config custom.yaml
     python agent.py --gpu-check     # print CUDA / device info and exit
+    python agent.py --readiness     # check models, print model.names, write readiness report
 """
 
 from __future__ import annotations
@@ -94,6 +100,29 @@ VIOLATION_LABELS_AR: dict[str, str] = {
 
 AGENT_VERSION = "1.0.0"
 
+# Shown whenever the optional environment model file is not present.
+ENV_MISSING_MSG = (
+    "Environment detection model missing — place environment_yolo.pt to enable "
+    "wet floor/trash/unclean detection."
+)
+
+# Default PPE model files shipped with the local agent (one purpose each).
+DEFAULT_PPE_MODELS = [
+    "models/mask_best.pt",
+    "models/glove_best.pt",
+    "models/hairnet_best.pt",
+]
+DEFAULT_ENVIRONMENT_MODEL = "models/environment_yolo.pt"
+
+# All PPE violation_types the platform can report (for readiness coverage math).
+ALL_PPE_VIOLATIONS = ["no_mask", "no_gloves", "no_headcover", "improper_uniform"]
+ALL_ENV_VIOLATIONS = ["wet_floor", "trash_on_floor", "unclean_area", "blocked_path", "unsafe_area"]
+
+# agent.py lives in <repo>/local_ai_agent/ — reports live in <repo>/reports/.
+AGENT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = AGENT_DIR.parent
+DEFAULT_READINESS_REPORT = REPO_ROOT / "reports" / "LOCAL_YOLO_READINESS_AR.md"
+
 
 # ---------------------------------------------------------------------------
 # Config
@@ -112,7 +141,7 @@ class AgentConfig:
     agent_api_key: str
     branch_id: int
     cameras: list[CameraConfig]
-    ppe_model: str
+    ppe_models: list[str]
     environment_model: str
     confidence_threshold: float = 0.45
     frame_interval_seconds: float = 2.0
@@ -149,13 +178,23 @@ def load_config(path: str) -> AgentConfig:
     detection = data.get("detection") or {}
     advanced = data.get("advanced") or {}
 
+    # PPE detection supports multiple single-purpose model files (ppe_models).
+    # Back-compat: a single legacy `ppe_model` string is still accepted.
+    ppe_models_raw = models.get("ppe_models")
+    if ppe_models_raw:
+        ppe_models = [str(m).strip() for m in ppe_models_raw if str(m).strip()]
+    elif models.get("ppe_model"):
+        ppe_models = [str(models.get("ppe_model")).strip()]
+    else:
+        ppe_models = list(DEFAULT_PPE_MODELS)
+
     return AgentConfig(
         backend_url=str(data.get("backend_url", "")).strip().rstrip("/"),
         agent_api_key=str(data.get("agent_api_key", "")).strip(),
         branch_id=int(data.get("branch_id", 1)),
         cameras=cameras,
-        ppe_model=str(models.get("ppe_model", "models/ppe_yolo.pt")).strip(),
-        environment_model=str(models.get("environment_model", "models/environment_yolo.pt")).strip(),
+        ppe_models=ppe_models,
+        environment_model=str(models.get("environment_model", DEFAULT_ENVIRONMENT_MODEL)).strip(),
         confidence_threshold=float(detection.get("confidence_threshold", 0.45)),
         frame_interval_seconds=float(detection.get("frame_interval_seconds", 2)),
         alert_cooldown_seconds=int(detection.get("alert_cooldown_seconds", 60)),
@@ -191,8 +230,9 @@ class DetectionEngine:
     def __init__(self, cfg: AgentConfig):
         self.cfg = cfg
         self.device = "cpu"
-        self._ppe = None
+        self._ppe_models: list[tuple[str, Any]] = []
         self._env = None
+        self.env_available = False
         self._loaded = False
 
     def resolve_device(self) -> str:
@@ -239,15 +279,34 @@ class DetectionEngine:
         from ultralytics import YOLO  # local import — heavy
 
         self.device = self.resolve_device()
-        ppe_path = Path(self.cfg.ppe_model)
-        env_path = Path(self.cfg.environment_model)
-        if not ppe_path.is_file():
-            raise FileNotFoundError(f"نموذج PPE غير موجود: {ppe_path}")
-        if not env_path.is_file():
-            raise FileNotFoundError(f"نموذج البيئة غير موجود: {env_path}")
         LOG.info("تحميل النماذج على الجهاز: %s", self.device)
-        self._ppe = YOLO(str(ppe_path))
-        self._env = YOLO(str(env_path))
+
+        # Load every available PPE model (skip missing ones with a warning).
+        self._ppe_models = []
+        for path_str in self.cfg.ppe_models:
+            p = Path(path_str)
+            if not p.is_file():
+                LOG.warning("نموذج PPE غير موجود (سيتم تخطّيه): %s", p)
+                continue
+            LOG.info("تحميل نموذج PPE: %s", p.name)
+            self._ppe_models.append((p.name, YOLO(str(p))))
+
+        if not self._ppe_models:
+            raise FileNotFoundError(
+                "لا يوجد أي نموذج PPE متاح. ضع نماذج PPE (mask/glove/hairnet) في مجلد models/."
+            )
+
+        # Environment model is OPTIONAL — never crash if it is missing.
+        env_path = Path(self.cfg.environment_model)
+        if env_path.is_file():
+            LOG.info("تحميل نموذج البيئة: %s", env_path.name)
+            self._env = YOLO(str(env_path))
+            self.env_available = True
+        else:
+            self._env = None
+            self.env_available = False
+            LOG.warning(ENV_MISSING_MSG)
+
         self._loaded = True
 
     def _run_model(self, model, frame, source: str) -> list[dict[str, Any]]:
@@ -272,11 +331,13 @@ class DetectionEngine:
         return out
 
     def detect(self, frame) -> list[dict[str, Any]]:
-        """Run BOTH models on the SAME frame; merge violations from both."""
+        """Run ALL available models on the SAME frame; merge their violations."""
         self.load()
         violations: list[dict[str, Any]] = []
-        violations.extend(self._run_model(self._ppe, frame, "ppe"))
-        violations.extend(self._run_model(self._env, frame, "env"))
+        for _name, model in self._ppe_models:
+            violations.extend(self._run_model(model, frame, "ppe"))
+        if self._env is not None:
+            violations.extend(self._run_model(self._env, frame, "env"))
         # Keep highest confidence per violation_type for this single frame.
         best: dict[str, dict[str, Any]] = {}
         for v in violations:
@@ -472,6 +533,244 @@ def run_cycle(
 
 
 # ---------------------------------------------------------------------------
+# Readiness check + report
+# ---------------------------------------------------------------------------
+def _safe_model_names(path: Path) -> tuple[dict[int, str] | None, str | None]:
+    """Return (model.names, None) or (None, error_message) without raising."""
+    try:
+        from ultralytics import YOLO
+    except Exception as exc:  # ultralytics/torch not installed
+        return None, f"ultralytics غير مثبّت: {exc}"
+    try:
+        model = YOLO(str(path))
+        return dict(model.names), None
+    except Exception as exc:
+        return None, str(exc)
+
+
+def _mapped_violations(names: dict[int, str] | None, class_map: dict[str, str]) -> list[str]:
+    """Canonical violation_types a model can produce, derived from its class names."""
+    if not names:
+        return []
+    out: list[str] = []
+    for raw in names.values():
+        vtype = class_map.get(str(raw).strip().lower())
+        if vtype and vtype not in out:
+            out.append(vtype)
+    return out
+
+
+def compute_readiness(cfg: AgentConfig, *, inspect: bool = True) -> dict[str, Any]:
+    """Inspect configured model files and summarize PPE + environment readiness."""
+    ppe_entries: list[dict[str, Any]] = []
+    for path_str in cfg.ppe_models:
+        p = Path(path_str)
+        exists = p.is_file()
+        names: dict[int, str] | None = None
+        error: str | None = None
+        if exists and inspect:
+            names, error = _safe_model_names(p)
+        ppe_entries.append(
+            {
+                "path": str(p),
+                "name": p.name,
+                "exists": exists,
+                "names": names,
+                "error": error,
+                "violations": _mapped_violations(names, PPE_VIOLATION_CLASSES),
+            }
+        )
+
+    env_path = Path(cfg.environment_model)
+    env_exists = env_path.is_file()
+    env_names: dict[int, str] | None = None
+    env_error: str | None = None
+    if env_exists and inspect:
+        env_names, env_error = _safe_model_names(env_path)
+    env_entry = {
+        "path": str(env_path),
+        "name": env_path.name,
+        "exists": env_exists,
+        "names": env_names,
+        "error": env_error,
+        "violations": _mapped_violations(env_names, ENV_VIOLATION_CLASSES),
+    }
+
+    supported: list[str] = []
+    for e in ppe_entries:
+        for v in e["violations"]:
+            if v not in supported:
+                supported.append(v)
+    for v in env_entry["violations"]:
+        if v not in supported:
+            supported.append(v)
+
+    ppe_present = sum(1 for e in ppe_entries if e["exists"])
+    ppe_covered = [v for v in ALL_PPE_VIOLATIONS if v in supported]
+    if ppe_present == 0:
+        ppe_status = "not_ready"
+    elif len(ppe_covered) >= len(ALL_PPE_VIOLATIONS):
+        ppe_status = "ready"
+    else:
+        ppe_status = "partial"
+
+    env_status = "ready" if env_exists else "not_ready"
+
+    missing = [e["path"] for e in ppe_entries if not e["exists"]]
+    if not env_exists:
+        missing.append(env_entry["path"])
+
+    return {
+        "ppe_entries": ppe_entries,
+        "env_entry": env_entry,
+        "supported_violations": supported,
+        "ppe_status": ppe_status,
+        "env_status": env_status,
+        "ppe_covered": ppe_covered,
+        "missing": missing,
+    }
+
+
+_STATUS_AR = {
+    "ready": "جاهزة ✅",
+    "partial": "جاهزة جزئياً ⚠️",
+    "not_ready": "غير جاهزة ❌",
+}
+
+
+def render_readiness_report(cfg: AgentConfig, st: dict[str, Any]) -> str:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines: list[str] = []
+    lines.append("# تقرير جاهزية الوكيل المحلي YOLO — عين الجودة")
+    lines.append("")
+    lines.append(f"> آخر تحديث: {now} · إصدار الوكيل: {AGENT_VERSION}")
+    lines.append("")
+    lines.append("## الحالة العامة")
+    lines.append("")
+    lines.append("| المنظومة | الحالة |")
+    lines.append("|---|---|")
+    lines.append(f"| كشف معدات الحماية (PPE) | {_STATUS_AR[st['ppe_status']]} |")
+    lines.append(f"| كشف البيئة/المكان (Environment) | {_STATUS_AR[st['env_status']]} |")
+    lines.append("")
+    if st["ppe_status"] == "partial":
+        covered = "، ".join(VIOLATION_LABELS_AR.get(v, v) for v in st["ppe_covered"]) or "—"
+        lines.append(
+            f"- **كشف PPE: جاهز جزئياً** — النماذج المتوفّرة تغطّي: {covered}. "
+            "باقي فحوصات PPE (مثل الزي الرسمي) تحتاج نموذجاً إضافياً."
+        )
+    if st["env_status"] == "not_ready":
+        lines.append(f"- **كشف البيئة: غير جاهز** — {ENV_MISSING_MSG}")
+    lines.append("")
+
+    lines.append("## نماذج PPE")
+    lines.append("")
+    lines.append("| الملف | موجود | الفئات (model.names) | المخالفات المدعومة |")
+    lines.append("|---|---|---|---|")
+    for e in st["ppe_entries"]:
+        exists = "نعم" if e["exists"] else "لا"
+        names = ", ".join(str(v) for v in (e["names"] or {}).values()) if e["names"] else (
+            e["error"] or ("—" if e["exists"] else "ملف مفقود")
+        )
+        viol = "، ".join(VIOLATION_LABELS_AR.get(v, v) for v in e["violations"]) or "—"
+        lines.append(f"| `{e['name']}` | {exists} | {names} | {viol} |")
+    lines.append("")
+
+    lines.append("## نموذج البيئة")
+    lines.append("")
+    env = st["env_entry"]
+    if env["exists"]:
+        names = ", ".join(str(v) for v in (env["names"] or {}).values()) if env["names"] else (
+            env["error"] or "—"
+        )
+        viol = "، ".join(VIOLATION_LABELS_AR.get(v, v) for v in env["violations"]) or "—"
+        lines.append(f"- `{env['name']}` موجود — الفئات: {names}")
+        lines.append(f"- المخالفات المدعومة: {viol}")
+    else:
+        lines.append(f"- `{env['name']}` **غير موجود**.")
+        lines.append(f"- {ENV_MISSING_MSG}")
+    lines.append("")
+
+    lines.append("## النماذج الناقصة")
+    lines.append("")
+    if st["missing"]:
+        for m in st["missing"]:
+            lines.append(f"- `{m}`")
+    else:
+        lines.append("- لا يوجد — جميع النماذج المُعدّة متوفّرة.")
+    lines.append("")
+
+    lines.append("## الملفات المطلوبة لإكمال الجاهزية")
+    lines.append("")
+    lines.append("ضع الملفات التالية داخل `local_ai_agent/models/`:")
+    lines.append("")
+    lines.append("| الملف | الغرض | الحالة |")
+    lines.append("|---|---|---|")
+    for e in st["ppe_entries"]:
+        lines.append(f"| `{e['name']}` | كشف PPE | {'متوفّر' if e['exists'] else 'مطلوب'} |")
+    lines.append(
+        f"| `{env['name']}` | كشف البيئة (أرضية مبللة/نفايات/اتساخ/ممر مسدود/منطقة خطرة) | "
+        f"{'متوفّر' if env['exists'] else 'مطلوب (اختياري حالياً)'} |"
+    )
+    lines.append("")
+
+    lines.append("## المخالفات المدعومة حالياً")
+    lines.append("")
+    if st["supported_violations"]:
+        for v in st["supported_violations"]:
+            lines.append(f"- {VIOLATION_LABELS_AR.get(v, v)} (`{v}`)")
+    else:
+        lines.append("- لا توجد مخالفات مدعومة بعد — لم يُحمَّل أي نموذج.")
+    lines.append("")
+
+    lines.append("## المخالفات غير المدعومة بعد")
+    lines.append("")
+    not_supported = [
+        v for v in (ALL_PPE_VIOLATIONS + ALL_ENV_VIOLATIONS)
+        if v not in st["supported_violations"]
+    ]
+    if not_supported:
+        for v in not_supported:
+            lines.append(f"- {VIOLATION_LABELS_AR.get(v, v)} (`{v}`)")
+    else:
+        lines.append("- لا يوجد — جميع المخالفات مدعومة.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_readiness_report(cfg: AgentConfig, st: dict[str, Any], out_path: Path) -> Path:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(render_readiness_report(cfg, st), encoding="utf-8")
+    return out_path
+
+
+def run_readiness(cfg: AgentConfig, out_path: Path) -> int:
+    LOG.info("فحص جاهزية النماذج المحلية ...")
+    st = compute_readiness(cfg, inspect=True)
+
+    # Print model.names for every available model (test loading).
+    for e in st["ppe_entries"]:
+        if not e["exists"]:
+            LOG.warning("PPE [%s]: ملف مفقود → %s", e["name"], e["path"])
+        elif e["error"]:
+            LOG.error("PPE [%s]: تعذّر التحميل → %s", e["name"], e["error"])
+        else:
+            LOG.info("PPE [%s] model.names = %s", e["name"], e["names"])
+
+    env = st["env_entry"]
+    if not env["exists"]:
+        LOG.warning(ENV_MISSING_MSG)
+    elif env["error"]:
+        LOG.error("Environment [%s]: تعذّر التحميل → %s", env["name"], env["error"])
+    else:
+        LOG.info("Environment [%s] model.names = %s", env["name"], env["names"])
+
+    LOG.info("حالة PPE: %s | حالة البيئة: %s", st["ppe_status"], st["env_status"])
+    report = write_readiness_report(cfg, st, out_path)
+    LOG.info("تمت كتابة تقرير الجاهزية: %s", report)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Test modes
 # ---------------------------------------------------------------------------
 def test_cameras(cfg: AgentConfig) -> int:
@@ -525,6 +824,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--test-camera", action="store_true", help="اختبار كاميرات RTSP")
     parser.add_argument("--test-backend", action="store_true", help="اختبار الاتصال بالخادم والمفتاح")
     parser.add_argument("--gpu-check", action="store_true", help="عرض معلومات CUDA/الجهاز")
+    parser.add_argument(
+        "--readiness",
+        action="store_true",
+        help="فحص النماذج وطباعة model.names وكتابة تقرير الجاهزية",
+    )
+    parser.add_argument(
+        "--readiness-out",
+        default=str(DEFAULT_READINESS_REPORT),
+        help="مسار تقرير الجاهزية (افتراضي: reports/LOCAL_YOLO_READINESS_AR.md)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -538,6 +847,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.gpu_check:
         print(DetectionEngine(cfg).gpu_report())
         return 0
+
+    if args.readiness:
+        return run_readiness(cfg, Path(args.readiness_out))
 
     if args.test_camera:
         return test_cameras(cfg)
