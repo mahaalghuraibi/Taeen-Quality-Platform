@@ -75,7 +75,14 @@ PPE_VIOLATION_CLASSES: dict[str, str] = {
     "no_mask": "no_mask", "no-mask": "no_mask", "without_mask": "no_mask",
     "no_headcover": "no_headcover", "no-hardhat": "no_headcover", "no_hat": "no_headcover",
     "no_haircover": "no_headcover", "no_hairnet": "no_headcover",
-    "improper_uniform": "improper_uniform", "no_uniform": "improper_uniform",
+}
+# Uniform model — its own file (uniform_yolo.pt). "uniform_ok" is compliant and
+# intentionally NOT mapped, so it never produces an alert.
+UNIFORM_VIOLATION_CLASSES: dict[str, str] = {
+    "no_uniform": "improper_uniform",
+    "improper_uniform": "improper_uniform",
+    "wrong_uniform": "improper_uniform",
+    "no-uniform": "improper_uniform",
 }
 ENV_VIOLATION_CLASSES: dict[str, str] = {
     "wet_floor": "wet_floor", "wet-floor": "wet_floor", "water": "wet_floor",
@@ -100,23 +107,28 @@ VIOLATION_LABELS_AR: dict[str, str] = {
 
 AGENT_VERSION = "1.0.0"
 
-# Shown whenever the optional environment model file is not present.
+# Shown whenever an optional model file is not present (no crash either way).
 ENV_MISSING_MSG = (
     "Environment detection model missing — place environment_yolo.pt to enable "
     "wet floor/trash/unclean detection."
 )
+UNIFORM_MISSING_MSG_AR = "ضع ملف uniform_yolo.pt لتفعيل كشف الزي الرسمي"
+ENV_MISSING_MSG_AR = "ضع ملف environment_yolo.pt لتفعيل مخالفات المكان"
 
-# Default PPE model files shipped with the local agent (one purpose each).
+# Default model files shipped with / expected by the local agent (one purpose each).
 DEFAULT_PPE_MODELS = [
     "models/mask_best.pt",
     "models/glove_best.pt",
     "models/hairnet_best.pt",
 ]
+DEFAULT_UNIFORM_MODEL = "models/uniform_yolo.pt"
 DEFAULT_ENVIRONMENT_MODEL = "models/environment_yolo.pt"
 
-# All PPE violation_types the platform can report (for readiness coverage math).
-ALL_PPE_VIOLATIONS = ["no_mask", "no_gloves", "no_headcover", "improper_uniform"]
+# Violation groups (for readiness coverage math + "missing" reporting).
+PPE_CORE_VIOLATIONS = ["no_mask", "no_gloves", "no_headcover"]
+UNIFORM_VIOLATIONS = ["improper_uniform"]
 ALL_ENV_VIOLATIONS = ["wet_floor", "trash_on_floor", "unclean_area", "blocked_path", "unsafe_area"]
+ALL_VIOLATIONS = PPE_CORE_VIOLATIONS + UNIFORM_VIOLATIONS + ALL_ENV_VIOLATIONS
 
 # agent.py lives in <repo>/local_ai_agent/ — reports live in <repo>/reports/.
 AGENT_DIR = Path(__file__).resolve().parent
@@ -142,6 +154,7 @@ class AgentConfig:
     branch_id: int
     cameras: list[CameraConfig]
     ppe_models: list[str]
+    uniform_model: str
     environment_model: str
     confidence_threshold: float = 0.45
     frame_interval_seconds: float = 2.0
@@ -194,6 +207,7 @@ def load_config(path: str) -> AgentConfig:
         branch_id=int(data.get("branch_id", 1)),
         cameras=cameras,
         ppe_models=ppe_models,
+        uniform_model=str(models.get("uniform_model", DEFAULT_UNIFORM_MODEL)).strip(),
         environment_model=str(models.get("environment_model", DEFAULT_ENVIRONMENT_MODEL)).strip(),
         confidence_threshold=float(detection.get("confidence_threshold", 0.45)),
         frame_interval_seconds=float(detection.get("frame_interval_seconds", 2)),
@@ -231,6 +245,8 @@ class DetectionEngine:
         self.cfg = cfg
         self.device = "cpu"
         self._ppe_models: list[tuple[str, Any]] = []
+        self._uniform = None
+        self.uniform_available = False
         self._env = None
         self.env_available = False
         self._loaded = False
@@ -296,6 +312,17 @@ class DetectionEngine:
                 "لا يوجد أي نموذج PPE متاح. ضع نماذج PPE (mask/glove/hairnet) في مجلد models/."
             )
 
+        # Uniform model is OPTIONAL — never crash if it is missing.
+        uniform_path = Path(self.cfg.uniform_model)
+        if uniform_path.is_file():
+            LOG.info("تحميل نموذج الزي الرسمي: %s", uniform_path.name)
+            self._uniform = YOLO(str(uniform_path))
+            self.uniform_available = True
+        else:
+            self._uniform = None
+            self.uniform_available = False
+            LOG.warning(UNIFORM_MISSING_MSG_AR)
+
         # Environment model is OPTIONAL — never crash if it is missing.
         env_path = Path(self.cfg.environment_model)
         if env_path.is_file():
@@ -306,10 +333,11 @@ class DetectionEngine:
             self._env = None
             self.env_available = False
             LOG.warning(ENV_MISSING_MSG)
+            LOG.warning(ENV_MISSING_MSG_AR)
 
         self._loaded = True
 
-    def _run_model(self, model, frame, source: str) -> list[dict[str, Any]]:
+    def _run_model(self, model, frame, class_map: dict[str, str]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         results = model.predict(
             frame,
@@ -317,7 +345,6 @@ class DetectionEngine:
             device=self.device,
             verbose=False,
         )
-        class_map = PPE_VIOLATION_CLASSES if source == "ppe" else ENV_VIOLATION_CLASSES
         for res in results:
             names = res.names or {}
             for box in res.boxes or []:
@@ -335,9 +362,11 @@ class DetectionEngine:
         self.load()
         violations: list[dict[str, Any]] = []
         for _name, model in self._ppe_models:
-            violations.extend(self._run_model(model, frame, "ppe"))
+            violations.extend(self._run_model(model, frame, PPE_VIOLATION_CLASSES))
+        if self._uniform is not None:
+            violations.extend(self._run_model(self._uniform, frame, UNIFORM_VIOLATION_CLASSES))
         if self._env is not None:
-            violations.extend(self._run_model(self._env, frame, "env"))
+            violations.extend(self._run_model(self._env, frame, ENV_VIOLATION_CLASSES))
         # Keep highest confidence per violation_type for this single frame.
         best: dict[str, dict[str, Any]] = {}
         for v in violations:
@@ -581,50 +610,56 @@ def compute_readiness(cfg: AgentConfig, *, inspect: bool = True) -> dict[str, An
             }
         )
 
-    env_path = Path(cfg.environment_model)
-    env_exists = env_path.is_file()
-    env_names: dict[int, str] | None = None
-    env_error: str | None = None
-    if env_exists and inspect:
-        env_names, env_error = _safe_model_names(env_path)
-    env_entry = {
-        "path": str(env_path),
-        "name": env_path.name,
-        "exists": env_exists,
-        "names": env_names,
-        "error": env_error,
-        "violations": _mapped_violations(env_names, ENV_VIOLATION_CLASSES),
-    }
+    def _single_entry(path_str: str, class_map: dict[str, str]) -> dict[str, Any]:
+        p = Path(path_str)
+        exists = p.is_file()
+        names: dict[int, str] | None = None
+        error: str | None = None
+        if exists and inspect:
+            names, error = _safe_model_names(p)
+        return {
+            "path": str(p),
+            "name": p.name,
+            "exists": exists,
+            "names": names,
+            "error": error,
+            "violations": _mapped_violations(names, class_map),
+        }
+
+    uniform_entry = _single_entry(cfg.uniform_model, UNIFORM_VIOLATION_CLASSES)
+    env_entry = _single_entry(cfg.environment_model, ENV_VIOLATION_CLASSES)
 
     supported: list[str] = []
-    for e in ppe_entries:
+    for e in (*ppe_entries, uniform_entry, env_entry):
         for v in e["violations"]:
             if v not in supported:
                 supported.append(v)
-    for v in env_entry["violations"]:
-        if v not in supported:
-            supported.append(v)
 
     ppe_present = sum(1 for e in ppe_entries if e["exists"])
-    ppe_covered = [v for v in ALL_PPE_VIOLATIONS if v in supported]
+    ppe_covered = [v for v in PPE_CORE_VIOLATIONS if v in supported]
     if ppe_present == 0:
         ppe_status = "not_ready"
-    elif len(ppe_covered) >= len(ALL_PPE_VIOLATIONS):
+    elif len(ppe_covered) >= len(PPE_CORE_VIOLATIONS):
         ppe_status = "ready"
     else:
         ppe_status = "partial"
 
-    env_status = "ready" if env_exists else "not_ready"
+    uniform_status = "ready" if uniform_entry["exists"] else "not_ready"
+    env_status = "ready" if env_entry["exists"] else "not_ready"
 
     missing = [e["path"] for e in ppe_entries if not e["exists"]]
-    if not env_exists:
+    if not uniform_entry["exists"]:
+        missing.append(uniform_entry["path"])
+    if not env_entry["exists"]:
         missing.append(env_entry["path"])
 
     return {
         "ppe_entries": ppe_entries,
+        "uniform_entry": uniform_entry,
         "env_entry": env_entry,
         "supported_violations": supported,
         "ppe_status": ppe_status,
+        "uniform_status": uniform_status,
         "env_status": env_status,
         "ppe_covered": ppe_covered,
         "missing": missing,
@@ -649,17 +684,18 @@ def render_readiness_report(cfg: AgentConfig, st: dict[str, Any]) -> str:
     lines.append("")
     lines.append("| المنظومة | الحالة |")
     lines.append("|---|---|")
-    lines.append(f"| كشف معدات الحماية (PPE) | {_STATUS_AR[st['ppe_status']]} |")
+    lines.append(f"| كشف معدات الحماية (PPE: كمامة/قفازات/غطاء رأس) | {_STATUS_AR[st['ppe_status']]} |")
+    lines.append(f"| كشف الزي الرسمي (Uniform) | {_STATUS_AR[st['uniform_status']]} |")
     lines.append(f"| كشف البيئة/المكان (Environment) | {_STATUS_AR[st['env_status']]} |")
     lines.append("")
     if st["ppe_status"] == "partial":
         covered = "، ".join(VIOLATION_LABELS_AR.get(v, v) for v in st["ppe_covered"]) or "—"
-        lines.append(
-            f"- **كشف PPE: جاهز جزئياً** — النماذج المتوفّرة تغطّي: {covered}. "
-            "باقي فحوصات PPE (مثل الزي الرسمي) تحتاج نموذجاً إضافياً."
-        )
+        lines.append(f"- **كشف PPE: جاهز جزئياً** — النماذج المتوفّرة تغطّي: {covered}.")
+    if st["uniform_status"] == "not_ready":
+        lines.append(f"- **كشف الزي الرسمي: غير جاهز** — {UNIFORM_MISSING_MSG_AR}")
     if st["env_status"] == "not_ready":
-        lines.append(f"- **كشف البيئة: غير جاهز** — {ENV_MISSING_MSG}")
+        lines.append(f"- **كشف البيئة: غير جاهز** — {ENV_MISSING_MSG_AR}")
+        lines.append(f"  - {ENV_MISSING_MSG}")
     lines.append("")
 
     lines.append("## نماذج PPE")
@@ -675,6 +711,22 @@ def render_readiness_report(cfg: AgentConfig, st: dict[str, Any]) -> str:
         lines.append(f"| `{e['name']}` | {exists} | {names} | {viol} |")
     lines.append("")
 
+    lines.append("## نموذج الزي الرسمي")
+    lines.append("")
+    uni = st["uniform_entry"]
+    if uni["exists"]:
+        names = ", ".join(str(v) for v in (uni["names"] or {}).values()) if uni["names"] else (
+            uni["error"] or "—"
+        )
+        viol = "، ".join(VIOLATION_LABELS_AR.get(v, v) for v in uni["violations"]) or "—"
+        lines.append(f"- `{uni['name']}` موجود — الفئات: {names}")
+        lines.append(f"- المخالفات المدعومة: {viol}")
+        lines.append("- ملاحظة: الفئة `uniform_ok` تعني التزاماً ولا تُنشئ تنبيهاً.")
+    else:
+        lines.append(f"- `{uni['name']}` **غير موجود**.")
+        lines.append(f"- {UNIFORM_MISSING_MSG_AR}")
+    lines.append("")
+
     lines.append("## نموذج البيئة")
     lines.append("")
     env = st["env_entry"]
@@ -687,6 +739,7 @@ def render_readiness_report(cfg: AgentConfig, st: dict[str, Any]) -> str:
         lines.append(f"- المخالفات المدعومة: {viol}")
     else:
         lines.append(f"- `{env['name']}` **غير موجود**.")
+        lines.append(f"- {ENV_MISSING_MSG_AR}")
         lines.append(f"- {ENV_MISSING_MSG}")
     lines.append("")
 
@@ -708,6 +761,10 @@ def render_readiness_report(cfg: AgentConfig, st: dict[str, Any]) -> str:
     for e in st["ppe_entries"]:
         lines.append(f"| `{e['name']}` | كشف PPE | {'متوفّر' if e['exists'] else 'مطلوب'} |")
     lines.append(
+        f"| `{uni['name']}` | كشف الزي الرسمي (improper_uniform) | "
+        f"{'متوفّر' if uni['exists'] else 'مطلوب (اختياري حالياً)'} |"
+    )
+    lines.append(
         f"| `{env['name']}` | كشف البيئة (أرضية مبللة/نفايات/اتساخ/ممر مسدود/منطقة خطرة) | "
         f"{'متوفّر' if env['exists'] else 'مطلوب (اختياري حالياً)'} |"
     )
@@ -725,7 +782,7 @@ def render_readiness_report(cfg: AgentConfig, st: dict[str, Any]) -> str:
     lines.append("## المخالفات غير المدعومة بعد")
     lines.append("")
     not_supported = [
-        v for v in (ALL_PPE_VIOLATIONS + ALL_ENV_VIOLATIONS)
+        v for v in ALL_VIOLATIONS
         if v not in st["supported_violations"]
     ]
     if not_supported:
@@ -756,15 +813,27 @@ def run_readiness(cfg: AgentConfig, out_path: Path) -> int:
         else:
             LOG.info("PPE [%s] model.names = %s", e["name"], e["names"])
 
+    uni = st["uniform_entry"]
+    if not uni["exists"]:
+        LOG.warning(UNIFORM_MISSING_MSG_AR)
+    elif uni["error"]:
+        LOG.error("Uniform [%s]: تعذّر التحميل → %s", uni["name"], uni["error"])
+    else:
+        LOG.info("Uniform [%s] model.names = %s", uni["name"], uni["names"])
+
     env = st["env_entry"]
     if not env["exists"]:
         LOG.warning(ENV_MISSING_MSG)
+        LOG.warning(ENV_MISSING_MSG_AR)
     elif env["error"]:
         LOG.error("Environment [%s]: تعذّر التحميل → %s", env["name"], env["error"])
     else:
         LOG.info("Environment [%s] model.names = %s", env["name"], env["names"])
 
-    LOG.info("حالة PPE: %s | حالة البيئة: %s", st["ppe_status"], st["env_status"])
+    LOG.info(
+        "حالة PPE: %s | الزي الرسمي: %s | البيئة: %s",
+        st["ppe_status"], st["uniform_status"], st["env_status"],
+    )
     report = write_readiness_report(cfg, st, out_path)
     LOG.info("تمت كتابة تقرير الجاهزية: %s", report)
     return 0

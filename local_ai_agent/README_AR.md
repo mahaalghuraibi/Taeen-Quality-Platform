@@ -69,12 +69,14 @@
 
 1. يُقرأ إطار واحد من RTSP.
 2. يُمرَّر **نفس الإطار** على نماذج PPE المتوفّرة (ملف لكل غرض) → يكشف مثلاً: `no_mask` (mask_best.pt)، `no_gloves` (glove_best.pt)، `no_headcover` (hairnet_best.pt).
-3. يُمرَّر **نفس الإطار** على نموذج البيئة (اختياري) → يكشف: `wet_floor`, `trash_on_floor`, `unclean_area`, `blocked_path`, `unsafe_area`.
-4. تُدمَج النواتج — إطار واحد قد ينتج **عدة مخالفات في آن واحد**.
-5. لكل مخالفة فوق عتبة الثقة: لقطة دليل + إرسال إلى الخادم.
+3. يُمرَّر **نفس الإطار** على نموذج الزي الرسمي (اختياري) → يكشف: `improper_uniform`.
+4. يُمرَّر **نفس الإطار** على نموذج البيئة (اختياري) → يكشف: `wet_floor`, `trash_on_floor`, `unclean_area`, `blocked_path`, `unsafe_area`.
+5. تُدمَج النواتج — إطار واحد قد ينتج **عدة مخالفات في آن واحد**.
+6. لكل مخالفة فوق عتبة الثقة: لقطة دليل + إرسال إلى الخادم.
 
-> نموذج البيئة اختياري: إذا كان `environment_yolo.pt` غير موجود يستمر الوكيل بكشف PPE فقط دون تعطّل.
+> نماذج الزي والبيئة اختيارية: إذا كان `uniform_yolo.pt` أو `environment_yolo.pt` غير موجود يستمر الوكيل دون تعطّل ويعرض تحذيراً.
 > لفحص الجاهزية وطباعة `model.names`: `python agent.py --readiness` (يكتب `reports/LOCAL_YOLO_READINESS_AR.md`).
+> راجع `models/README_AR.md` لتعليمات وضع النماذج والفئات المتوقّعة.
 
 ---
 
@@ -242,9 +244,11 @@ local_ai_agent/
 ├── install_windows_ar.md
 ├── install_linux_ar.md
 ├── models/
+│   ├── README_AR.md          # تعليمات وضع النماذج والفئات المتوقّعة
 │   ├── mask_best.pt          # PPE: الكمامة (no_mask)
 │   ├── glove_best.pt         # PPE: القفازات (no_gloves)
 │   ├── hairnet_best.pt       # PPE: غطاء الرأس (no_hairnet → no_headcover)
+│   ├── uniform_yolo.pt       # اختياري: الزي الرسمي (improper_uniform)
 │   └── environment_yolo.pt   # اختياري: أرضية مبللة/نفايات/اتساخ/ممر مسدود/منطقة خطرة
 └── snapshots/            # لقطات مؤقتة (تُنشأ تلقائياً)
 ```

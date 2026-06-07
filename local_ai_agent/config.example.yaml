@@ -36,6 +36,8 @@ models:
     - "models/mask_best.pt"      # الكمامة (no_mask)
     - "models/glove_best.pt"     # القفازات (no_gloves)
     - "models/hairnet_best.pt"   # غطاء الرأس (no_hairnet -> no_headcover)
+  # نموذج الزي الرسمي اختياري — إن لم يوجد الملف يستمر الوكيل دون كشف الزي دون تعطّل
+  uniform_model: "models/uniform_yolo.pt"          # الزي الرسمي (no_uniform/improper_uniform -> improper_uniform)
   # نموذج البيئة اختياري — إن لم يوجد الملف يستمر الوكيل بكشف PPE فقط دون تعطّل
   environment_model: "models/environment_yolo.pt"  # أرضية مبللة، نفايات، اتساخ، ممر مسدود، منطقة خطرة
 
