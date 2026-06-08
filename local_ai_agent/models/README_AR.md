@@ -19,10 +19,19 @@ local_ai_agent/models/
 | `glove_best.pt` | القفازات | `no_gloves` | متوفّر |
 | `hairnet_best.pt` | غطاء الرأس | `no_headcover` | متوفّر |
 | `uniform_yolo.pt` | الزي الرسمي | `improper_uniform` | **مطلوب (اختياري)** |
-| `environment_yolo.pt` | البيئة/المكان | `wet_floor`, `trash_on_floor`, `unclean_area`, `blocked_path`, `unsafe_area` | **مطلوب (اختياري)** |
+| `environment_yolo.pt` | البيئة/المكان | `wet_floor` حالياً (وباقي مخالفات المكان عند توفّر بيانات) | **منشور — يكشف `wet_floor`** |
 
 جميع النماذج عدا PPE اختيارية: إذا كان أي ملف مفقوداً يستمر الوكيل بالعمل دون تعطّل،
 ويعرض تحذيراً واضحاً، ولا يكشف المخالفات الخاصة بذلك النموذج فقط.
+
+> **حالة النماذج الحالية:**
+> - **PPE جاهز:** `no_mask`، `no_gloves`، `no_headcover`.
+> - **البيئة منشور:** `environment_yolo.pt` يكشف `wet_floor` (الأرضية المبللة).
+> - **الزي الرسمي اختياري/غير جاهز:** أضف `uniform_yolo.pt` لتفعيل `improper_uniform`.
+>
+> **دقة نموذج الأرضية المبللة محدودة** لأنه دُرِّب على مجموعة بيانات صغيرة —
+> يجب إجراء التحقق النهائي بصور حقيقية من كاميرات المطعم قبل الاعتماد الكامل
+> (راجع `docs/AI_VALIDATION_GUIDE_AR.md`).
 
 ---
 

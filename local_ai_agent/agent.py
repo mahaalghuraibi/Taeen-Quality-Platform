@@ -86,6 +86,7 @@ UNIFORM_VIOLATION_CLASSES: dict[str, str] = {
 }
 ENV_VIOLATION_CLASSES: dict[str, str] = {
     "wet_floor": "wet_floor", "wet-floor": "wet_floor", "water": "wet_floor",
+    "puddle": "wet_floor",  # Roboflow wet-floor dataset class name
     "trash": "trash_on_floor", "trash_on_floor": "trash_on_floor", "garbage": "trash_on_floor",
     "litter": "trash_on_floor",
     "unclean_area": "unclean_area", "dirty": "unclean_area", "stain": "unclean_area",
@@ -790,6 +791,26 @@ def render_readiness_report(cfg: AgentConfig, st: dict[str, Any]) -> str:
             lines.append(f"- {VIOLATION_LABELS_AR.get(v, v)} (`{v}`)")
     else:
         lines.append("- لا يوجد — جميع المخالفات مدعومة.")
+    lines.append("")
+
+    lines.append("## ملاحظات الدقة والتحقق النهائي")
+    lines.append("")
+    lines.append(
+        "- نموذج البيئة `environment_yolo.pt` **منشور ويكشف `wet_floor`** (الأرضية المبللة)."
+    )
+    lines.append(
+        "- نماذج PPE تكشف: عدم ارتداء الكمامة (`no_mask`)، عدم ارتداء القفازات (`no_gloves`)، "
+        "عدم ارتداء غطاء الرأس (`no_headcover`)."
+    )
+    lines.append(
+        "- نموذج الزي الرسمي `uniform_yolo.pt` **اختياري وغير جاهز** — أضف الملف لتفعيل "
+        "كشف `improper_uniform`."
+    )
+    lines.append(
+        "- **تنبيه دقة:** نموذج الأرضية المبللة دُرِّب على مجموعة بيانات صغيرة، لذا قد تكون "
+        "الدقة محدودة. يجب إجراء التحقق النهائي باستخدام صور حقيقية من كاميرات المطعم قبل "
+        "الاعتماد الكامل (راجع `docs/AI_VALIDATION_GUIDE_AR.md`)."
+    )
     lines.append("")
     return "\n".join(lines)
 
