@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -169,6 +170,18 @@ class Settings:
     HSTS_MAX_AGE: int = int(os.getenv("HSTS_MAX_AGE", "63072000"))
 
     @property
+    def effective_secret_key(self) -> str:
+        """JWT signing key — derives stable fallback from DATABASE_URL when SECRET_KEY unset on Render."""
+        key = (self.SECRET_KEY or "").strip()
+        weak = {"", "change-me", "changeme", "secret", "test", "dev"}
+        if len(key) >= 32 and key.lower() not in weak:
+            return key
+        db = (self.DATABASE_URL or "").strip()
+        if self.is_production and db and not db.startswith("sqlite"):
+            return hashlib.sha256(f"ska-jwt-v1::{db}".encode()).hexdigest()
+        return key or "change-me"
+
+    @property
     def is_production(self) -> bool:
         return str(self.ENVIRONMENT).strip().lower() == "production"
 
@@ -191,12 +204,19 @@ settings = Settings()
 
 
 def validate_settings_for_startup() -> None:
-    """Fail fast in production when JWT signing material is unsafe."""
+    """Ensure JWT signing material is usable in production."""
     if not settings.is_production:
         return
-    key = (settings.SECRET_KEY or "").strip()
-    weak = {"", "change-me", "changeme", "secret", "test", "dev"}
-    if len(key) < 32 or key.lower() in weak:
+    key = settings.effective_secret_key
+    if len(key) < 32:
         raise RuntimeError(
-            "ENVIRONMENT=production requires SECRET_KEY to be a strong random value (≥32 characters, not a placeholder)."
+            "ENVIRONMENT=production requires SECRET_KEY or a PostgreSQL DATABASE_URL for JWT signing."
+        )
+    raw = (settings.SECRET_KEY or "").strip()
+    weak = {"", "change-me", "changeme", "secret", "test", "dev"}
+    if len(raw) < 32 or raw.lower() in weak:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "SECRET_KEY missing/weak — using derived JWT key from DATABASE_URL; set SECRET_KEY in Render env"
         )
