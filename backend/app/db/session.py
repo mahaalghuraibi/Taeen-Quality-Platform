@@ -11,6 +11,7 @@ from app.core.config import (
     sanitize_database_url_for_log,
     settings,
     supabase_bootstrap_url_candidates,
+    supabase_runtime_url_after_bootstrap,
 )
 
 logger = logging.getLogger(__name__)
@@ -191,7 +192,8 @@ def init_db_with_retry(*, max_attempts: int = 4, delay_sec: float = 2.0) -> None
                     sanitize_database_url_for_log(bootstrap_url),
                     sslmode,
                 )
-                _rebuild_engine(sslmode=sslmode, url=bootstrap_url)
+                runtime_url = supabase_runtime_url_after_bootstrap(bootstrap_url, settings.DATABASE_URL)
+                _rebuild_engine(sslmode=sslmode, url=runtime_url)
                 return
             except Exception as exc:
                 last_exc = exc

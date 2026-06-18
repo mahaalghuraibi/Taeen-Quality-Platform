@@ -143,18 +143,22 @@ def resolve_database_bootstrap_url(runtime_url: str) -> str:
 
 def supabase_bootstrap_url_candidates(runtime_url: str) -> list[str]:
     """Ordered bootstrap URLs to try (deduplicated)."""
+    on_render = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
     ordered: list[str] = []
     direct_env = (os.getenv("DATABASE_DIRECT_URL") or os.getenv("DATABASE_MIGRATION_URL") or "").strip()
-    if direct_env:
+    if direct_env and not on_render:
         ordered.append(normalize_database_url(direct_env))
     normalized = normalize_database_url(runtime_url)
     ordered.append(normalized)
     if is_supabase_url(normalized):
         session = to_supabase_session_pooler_url(normalized)
-        ordered.append(session)
-        derived = try_derive_supabase_direct_url(session) or try_derive_supabase_direct_url(normalized)
-        if derived:
-            ordered.append(normalize_database_url(derived))
+        if session not in ordered:
+            ordered.append(session)
+        # Direct db.<ref>.supabase.co is often IPv6-only — Render free tier needs pooler (IPv4).
+        if not on_render:
+            derived = try_derive_supabase_direct_url(session) or try_derive_supabase_direct_url(normalized)
+            if derived:
+                ordered.append(normalize_database_url(derived))
     seen: set[str] = set()
     out: list[str] = []
     for u in ordered:
@@ -162,6 +166,14 @@ def supabase_bootstrap_url_candidates(runtime_url: str) -> list[str]:
             seen.add(u)
             out.append(u)
     return out
+
+
+def supabase_runtime_url_after_bootstrap(bootstrap_url: str, original_url: str) -> str:
+    """On Render keep session pooler for runtime (IPv4); elsewhere use working bootstrap URL."""
+    on_render = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
+    if on_render and is_supabase_url(original_url):
+        return to_supabase_session_pooler_url(normalize_database_url(original_url))
+    return bootstrap_url
 
 
 class Settings:
