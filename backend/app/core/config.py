@@ -2,7 +2,7 @@ import hashlib
 import os
 import re
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, quote_plus, urlencode, urlparse, urlunparse
 
 from dotenv import load_dotenv
 
@@ -111,6 +111,22 @@ def normalize_database_url(raw: str) -> str:
     return url
 
 
+def try_derive_supabase_direct_url(url: str) -> str | None:
+    """
+    Build Supabase direct connection URL from pooler URL.
+    Pooler user: postgres.<project-ref>  →  Direct user: postgres @ db.<ref>.supabase.co
+    """
+    parsed = urlparse(url)
+    user = parsed.username or ""
+    password = parsed.password or ""
+    if not password or not user.startswith("postgres."):
+        return None
+    project_ref = user.split(".", 1)[1].strip()
+    if not project_ref:
+        return None
+    return f"postgresql+psycopg2://postgres:{quote_plus(password)}@db.{project_ref}.supabase.co:5432/postgres"
+
+
 def resolve_database_bootstrap_url(runtime_url: str) -> str:
     """
     Schema bootstrap URL.
@@ -120,9 +136,32 @@ def resolve_database_bootstrap_url(runtime_url: str) -> str:
     if direct:
         return normalize_database_url(direct)
     url = normalize_database_url(runtime_url)
-    if is_supabase_transaction_pooler(url):
-        return to_supabase_session_pooler_url(url)
+    if is_supabase_transaction_pooler(runtime_url):
+        return to_supabase_session_pooler_url(normalize_database_url(runtime_url))
     return url
+
+
+def supabase_bootstrap_url_candidates(runtime_url: str) -> list[str]:
+    """Ordered bootstrap URLs to try (deduplicated)."""
+    ordered: list[str] = []
+    direct_env = (os.getenv("DATABASE_DIRECT_URL") or os.getenv("DATABASE_MIGRATION_URL") or "").strip()
+    if direct_env:
+        ordered.append(normalize_database_url(direct_env))
+    normalized = normalize_database_url(runtime_url)
+    ordered.append(normalized)
+    if is_supabase_url(normalized):
+        session = to_supabase_session_pooler_url(normalized)
+        ordered.append(session)
+        derived = try_derive_supabase_direct_url(session) or try_derive_supabase_direct_url(normalized)
+        if derived:
+            ordered.append(normalize_database_url(derived))
+    seen: set[str] = set()
+    out: list[str] = []
+    for u in ordered:
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
 
 
 class Settings:

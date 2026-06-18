@@ -10,6 +10,7 @@ from app.core.config import (
     is_supabase_url,
     sanitize_database_url_for_log,
     settings,
+    supabase_bootstrap_url_candidates,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,23 +59,31 @@ def _rebuild_engine(*, sslmode: str = "require", url: str | None = None) -> None
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def _get_bootstrap_engine():
+def _get_bootstrap_engine(url: str | None = None):
     global _bootstrap_engine, _bootstrap_session_factory
-    if _bootstrap_engine is None:
-        bootstrap_url = settings.DATABASE_BOOTSTRAP_URL
-        logger.info(
-            "Creating bootstrap DB engine for %s",
-            sanitize_database_url_for_log(bootstrap_url),
-        )
-        _bootstrap_engine = create_engine(
-            bootstrap_url,
-            **_engine_kwargs(sslmode="require", url=bootstrap_url),
-        )
-        _bootstrap_session_factory = sessionmaker(
-            autocommit=False,
-            autoflush=False,
-            bind=_bootstrap_engine,
-        )
+    bootstrap_url = url or settings.DATABASE_BOOTSTRAP_URL
+    if _bootstrap_engine is not None and url is None:
+        return _bootstrap_engine, _bootstrap_session_factory
+    if _bootstrap_engine is not None and url is not None:
+        try:
+            _bootstrap_engine.dispose()
+        except Exception:
+            pass
+        _bootstrap_engine = None
+        _bootstrap_session_factory = None
+    logger.info(
+        "Creating bootstrap DB engine for %s",
+        sanitize_database_url_for_log(bootstrap_url),
+    )
+    _bootstrap_engine = create_engine(
+        bootstrap_url,
+        **_engine_kwargs(sslmode="require", url=bootstrap_url),
+    )
+    _bootstrap_session_factory = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=_bootstrap_engine,
+    )
     return _bootstrap_engine, _bootstrap_session_factory
 
 
@@ -160,35 +169,41 @@ def init_db() -> None:
 
 
 def init_db_with_retry(*, max_attempts: int = 4, delay_sec: float = 2.0) -> None:
-    """Retry DB bootstrap — cloud Postgres may need a few seconds after wake."""
+    """Retry DB bootstrap — try Supabase session pooler then direct connection."""
     ssl_modes = ["require", "prefer"]
+    bootstrap_urls = supabase_bootstrap_url_candidates(settings.DATABASE_URL)
     last_exc: Exception | None = None
-    for attempt in range(1, max_attempts + 1):
-        sslmode = ssl_modes[min(attempt - 1, len(ssl_modes) - 1)]
-        if attempt > 1:
-            global _bootstrap_engine, _bootstrap_session_factory
-            _bootstrap_engine = None
-            _bootstrap_session_factory = None
-            _rebuild_engine(sslmode=sslmode)
-        try:
-            init_db()
-            verify_database_connection()
+    attempt = 0
+    for bootstrap_url in bootstrap_urls:
+        for sslmode in ssl_modes:
+            attempt += 1
             if attempt > 1:
-                logger.info("init_db succeeded on attempt %s/%s (sslmode=%s)", attempt, max_attempts, sslmode)
-            return
-        except Exception as exc:
-            last_exc = exc
-            logger.error(
-                "init_db attempt %s/%s failed (sslmode=%s, bootstrap=%s): %s: %s",
-                attempt,
-                max_attempts,
-                sslmode,
-                sanitize_database_url_for_log(settings.DATABASE_BOOTSTRAP_URL),
-                type(exc).__name__,
-                exc,
-            )
-            if attempt < max_attempts:
-                time.sleep(delay_sec)
+                global _bootstrap_engine, _bootstrap_session_factory
+                _bootstrap_engine = None
+                _bootstrap_session_factory = None
+                _rebuild_engine(sslmode=sslmode)
+            try:
+                _get_bootstrap_engine(bootstrap_url)
+                init_db()
+                verify_database_connection()
+                logger.info(
+                    "init_db succeeded (bootstrap=%s sslmode=%s)",
+                    sanitize_database_url_for_log(bootstrap_url),
+                    sslmode,
+                )
+                _rebuild_engine(sslmode=sslmode, url=bootstrap_url)
+                return
+            except Exception as exc:
+                last_exc = exc
+                logger.error(
+                    "init_db failed (bootstrap=%s sslmode=%s): %s: %s",
+                    sanitize_database_url_for_log(bootstrap_url),
+                    sslmode,
+                    type(exc).__name__,
+                    exc,
+                )
+                if attempt < max_attempts * len(bootstrap_urls):
+                    time.sleep(delay_sec)
     assert last_exc is not None
     raise last_exc
 def _ensure_camera_monitoring_columns() -> None:
