@@ -30,6 +30,7 @@ def bootstrap_database(app) -> bool:
     except Exception as exc:
         app.state.db_ready = False
         _last_bootstrap_error = f"{type(exc).__name__}: {exc}"
+        app.state.db_last_error = _last_bootstrap_error
         logger.exception(
             "database bootstrap failed runtime=%s bootstrap=%s: %s",
             sanitize_database_url_for_log(settings.DATABASE_URL),

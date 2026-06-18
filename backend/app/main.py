@@ -14,7 +14,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 import app.models  # noqa: F401 - register ORM mappers before routes import User
 from app.api.router import api_router
-from app.core.config import settings, validate_settings_for_startup
+from app.core.config import sanitize_database_url_for_log, settings
 from app.core.limiter import limiter
 from app.db.session import init_db_with_retry
 from app.middleware.security_headers import SecurityHeadersMiddleware
@@ -97,10 +97,14 @@ async def lifespan(_app: FastAPI):
         logger.warning(yolo_warning.strip())
 
     _app.state.db_ready = False
+    _app.state.db_target = sanitize_database_url_for_log(settings.DATABASE_URL)
+    _app.state.db_bootstrap_target = sanitize_database_url_for_log(settings.DATABASE_BOOTSTRAP_URL)
+    _app.state.db_last_error = None
     try:
         init_db_with_retry()
         _app.state.db_ready = True
-    except Exception:
+    except Exception as exc:
+        _app.state.db_last_error = f"{type(exc).__name__}: {exc}"
         logger.exception(
             "Database bootstrap failed at startup — API will retry on first auth request"
         )
@@ -216,7 +220,15 @@ def root() -> dict[str, str]:
 @app.get("/health")
 def health(request: Request) -> dict[str, str | bool]:
     """Lightweight liveness probe — must stay fast (no YOLO / DB migrations)."""
-    return {
+    payload: dict[str, str | bool] = {
         "status": "ok",
         "db": bool(getattr(request.app.state, "db_ready", False)),
     }
+    db_target = getattr(request.app.state, "db_target", None)
+    if db_target:
+        payload["db_target"] = str(db_target)
+    if not payload["db"]:
+        err = getattr(request.app.state, "db_last_error", None)
+        if err:
+            payload["db_error"] = str(err)[:240]
+    return payload
