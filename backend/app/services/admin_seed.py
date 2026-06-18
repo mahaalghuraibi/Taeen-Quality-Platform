@@ -73,6 +73,8 @@ def ensure_platform_admin(db: Session, *, email: str, password: str) -> bool:
 
 def ensure_seeded_admin_from_env() -> None:
     """Run on startup when SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD are configured."""
+    if settings.DATABASE_URL.startswith("sqlite"):
+        return
     email = normalize_email(settings.SEED_ADMIN_EMAIL)
     password = (settings.SEED_ADMIN_PASSWORD or "").strip()
     if not email or not password:

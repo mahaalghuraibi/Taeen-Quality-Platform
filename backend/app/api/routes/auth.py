@@ -6,6 +6,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.db.bootstrap import require_db_ready
 from app.db.session import get_db
 from app.models.branch import Branch
 from app.models.user import User
@@ -58,6 +59,7 @@ def login(
     db: Session = Depends(get_db),
 ) -> TokenResponse:
     """OAuth2 password flow: accepts email or username."""
+    require_db_ready(request)
     if not form_data.username or not form_data.password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

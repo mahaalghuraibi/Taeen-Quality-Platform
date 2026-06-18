@@ -96,7 +96,15 @@ async def lifespan(_app: FastAPI):
     if yolo_warning:
         logger.warning(yolo_warning.strip())
 
-    init_db_with_retry()
+    _app.state.db_ready = False
+    try:
+        init_db_with_retry()
+        _app.state.db_ready = True
+    except Exception:
+        logger.exception(
+            "Database bootstrap failed at startup — API will retry on first auth request"
+        )
+
     from app.services.dish_image_storage import dish_media_dir, migrate_legacy_dish_images_to_dishes
 
     dish_media_dir()
@@ -206,6 +214,9 @@ def root() -> dict[str, str]:
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+def health(request: Request) -> dict[str, str | bool]:
     """Lightweight liveness probe — must stay fast (no YOLO / DB migrations)."""
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "db": bool(getattr(request.app.state, "db_ready", False)),
+    }
