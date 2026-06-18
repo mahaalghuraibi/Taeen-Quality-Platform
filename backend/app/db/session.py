@@ -4,22 +4,30 @@ import time
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
-from app.core.config import settings
+from app.core.config import (
+    is_supabase_url,
+    sanitize_database_url_for_log,
+    settings,
+)
 
 logger = logging.getLogger(__name__)
 
+_bootstrap_engine = None
+_bootstrap_session_factory = None
 
-def _engine_kwargs(*, sslmode: str = "require") -> dict:
+
+def _engine_kwargs(*, sslmode: str = "require", url: str | None = None) -> dict:
+    db_url = url or settings.DATABASE_URL
     kwargs: dict = {
         "pool_pre_ping": True,
         "pool_recycle": 300,
     }
-    url = settings.DATABASE_URL
-    if url.startswith("sqlite"):
+    if db_url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
-    elif url.startswith("postgresql"):
-        host_part = url.split("@", 1)[-1] if "@" in url else url
+    elif db_url.startswith("postgresql"):
+        host_part = db_url.split("@", 1)[-1] if "@" in db_url else db_url
         is_local = any(x in host_part for x in ("localhost", "127.0.0.1"))
         connect_args: dict = {
             "connect_timeout": 20,
@@ -31,28 +39,68 @@ def _engine_kwargs(*, sslmode: str = "require") -> dict:
         if not is_local:
             connect_args["sslmode"] = sslmode
         kwargs["connect_args"] = connect_args
-        kwargs["pool_size"] = 5
-        kwargs["max_overflow"] = 10
+        if is_supabase_url(db_url):
+            kwargs["poolclass"] = NullPool
+        else:
+            kwargs["pool_size"] = 5
+            kwargs["max_overflow"] = 10
     return kwargs
 
 
-def _rebuild_engine(*, sslmode: str = "require") -> None:
+def _rebuild_engine(*, sslmode: str = "require", url: str | None = None) -> None:
     global engine, SessionLocal
+    db_url = url or settings.DATABASE_URL
     try:
         engine.dispose()
     except Exception:
         pass
-    engine = create_engine(settings.DATABASE_URL, **_engine_kwargs(sslmode=sslmode))
+    engine = create_engine(db_url, **_engine_kwargs(sslmode=sslmode, url=db_url))
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+def _get_bootstrap_engine():
+    global _bootstrap_engine, _bootstrap_session_factory
+    if _bootstrap_engine is None:
+        bootstrap_url = settings.DATABASE_BOOTSTRAP_URL
+        logger.info(
+            "Creating bootstrap DB engine for %s",
+            sanitize_database_url_for_log(bootstrap_url),
+        )
+        _bootstrap_engine = create_engine(
+            bootstrap_url,
+            **_engine_kwargs(sslmode="require", url=bootstrap_url),
+        )
+        _bootstrap_session_factory = sessionmaker(
+            autocommit=False,
+            autoflush=False,
+            bind=_bootstrap_engine,
+        )
+    return _bootstrap_engine, _bootstrap_session_factory
+
+
+def _bootstrap_session() -> Session:
+    _, factory = _get_bootstrap_engine()
+    return factory()
+
+
 _rebuild_engine(sslmode="require")
+logger.info("Runtime DB target: %s", sanitize_database_url_for_log(settings.DATABASE_URL))
 
 
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
+    finally:
+        db.close()
+
+
+def verify_database_connection() -> None:
+    """Lightweight connectivity check — raises on failure."""
+    db = SessionLocal()
+    try:
+        db.execute(text("SELECT 1"))
+        db.commit()
     finally:
         db.close()
 
@@ -76,54 +124,73 @@ def init_db() -> None:
     )
     from app.db.base import Base
 
-    Base.metadata.create_all(bind=engine)
-    _drop_legacy_monitoring_tables()
-    _ensure_camera_monitoring_columns()
-    _ensure_user_is_admin_column()
-    _ensure_user_profile_columns()
-    _ensure_user_username_column()
-    _ensure_user_assignment_columns()
-    _ensure_dish_review_columns()
-    _ensure_default_tenant()
-    _seed_default_branches()
-    _seed_meal_types()
-    # Guarantee predictable login accounts on local/dev SQLite (no-op on PostgreSQL).
-    _seed_dev_admin_if_empty()
-    _seed_default_supervisor()
-    _ensure_required_login_accounts()
-    from app.services.admin_seed import ensure_seeded_admin_from_env
+    bootstrap_engine, _ = _get_bootstrap_engine()
+    Base.metadata.create_all(bind=bootstrap_engine)
+    logger.info("Schema create_all completed on %s", sanitize_database_url_for_log(settings.DATABASE_BOOTSTRAP_URL))
 
-    ensure_seeded_admin_from_env()
+    global SessionLocal
+    _orig_session_local = SessionLocal
+
+    def _session_for_migrations() -> Session:
+        if settings.DATABASE_URL.startswith("sqlite"):
+            return _orig_session_local()
+        return _bootstrap_session()
+
+    # Temporarily route migration helpers through bootstrap connection on Postgres/Supabase.
+    SessionLocal = _session_for_migrations  # type: ignore[assignment]
+    try:
+        _drop_legacy_monitoring_tables()
+        _ensure_camera_monitoring_columns()
+        _ensure_user_is_admin_column()
+        _ensure_user_profile_columns()
+        _ensure_user_username_column()
+        _ensure_user_assignment_columns()
+        _ensure_dish_review_columns()
+        _ensure_default_tenant()
+        _seed_default_branches()
+        _seed_meal_types()
+        _seed_dev_admin_if_empty()
+        _seed_default_supervisor()
+        _ensure_required_login_accounts()
+        from app.services.admin_seed import ensure_seeded_admin_from_env
+
+        ensure_seeded_admin_from_env()
+    finally:
+        SessionLocal = _orig_session_local
 
 
-def init_db_with_retry(*, max_attempts: int = 8, delay_sec: float = 5.0) -> None:
-    """Retry DB bootstrap — Render Postgres may need a few seconds after wake."""
-    ssl_modes = ["require", "require", "prefer", "prefer"]
+def init_db_with_retry(*, max_attempts: int = 4, delay_sec: float = 2.0) -> None:
+    """Retry DB bootstrap — cloud Postgres may need a few seconds after wake."""
+    ssl_modes = ["require", "prefer"]
     last_exc: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         sslmode = ssl_modes[min(attempt - 1, len(ssl_modes) - 1)]
-        if attempt > 1 or sslmode != "require":
+        if attempt > 1:
+            global _bootstrap_engine, _bootstrap_session_factory
+            _bootstrap_engine = None
+            _bootstrap_session_factory = None
             _rebuild_engine(sslmode=sslmode)
         try:
             init_db()
+            verify_database_connection()
             if attempt > 1:
                 logger.info("init_db succeeded on attempt %s/%s (sslmode=%s)", attempt, max_attempts, sslmode)
             return
         except Exception as exc:
             last_exc = exc
-            logger.warning(
-                "init_db attempt %s/%s failed (sslmode=%s): %s",
+            logger.error(
+                "init_db attempt %s/%s failed (sslmode=%s, bootstrap=%s): %s: %s",
                 attempt,
                 max_attempts,
                 sslmode,
+                sanitize_database_url_for_log(settings.DATABASE_BOOTSTRAP_URL),
+                type(exc).__name__,
                 exc,
             )
             if attempt < max_attempts:
                 time.sleep(delay_sec)
     assert last_exc is not None
     raise last_exc
-
-
 def _ensure_camera_monitoring_columns() -> None:
     """Add ai_enabled / last_analysis_at for camera 24/7 prep (SQLite-safe)."""
     if not settings.DATABASE_URL.startswith("sqlite"):

@@ -30,6 +30,8 @@ services:
         value: "640"
       - key: YOLO_USE_PERSON_DETECTOR
         value: "false"
+      - key: SEED_ADMIN_EMAIL
+        value: xmha2000@outlook.com
 
   - type: web
     name: taeen-quality-frontend

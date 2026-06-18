@@ -48,6 +48,48 @@ def _strip_url_query_keys(url: str, *keys: str) -> str:
     return urlunparse(parsed._replace(query=urlencode(kept)))
 
 
+def is_supabase_url(url: str) -> bool:
+    lower = (url or "").lower()
+    return "supabase.com" in lower or "supabase.co" in lower
+
+
+def is_supabase_transaction_pooler(url: str) -> bool:
+    if not is_supabase_url(url):
+        return False
+    parsed = urlparse(url)
+    if parsed.port == 6543:
+        return True
+    return ":6543" in (url or "")
+
+
+def to_supabase_session_pooler_url(url: str) -> str:
+    """Supabase transaction pooler (6543) cannot run DDL/ORM bootstrap — use session pooler (5432)."""
+    if not url:
+        return url
+    parsed = urlparse(url)
+    if parsed.port == 6543 and parsed.hostname:
+        netloc = parsed.netloc.replace(f"{parsed.hostname}:6543", f"{parsed.hostname}:5432", 1)
+        return urlunparse(parsed._replace(netloc=netloc))
+    if ":6543" in url:
+        return url.replace(":6543", ":5432", 1)
+    return url
+
+
+def sanitize_database_url_for_log(url: str) -> str:
+    """Redact password for safe logging."""
+    try:
+        parsed = urlparse(url)
+        if not parsed.hostname:
+            return "(empty)"
+        user = parsed.username or "?"
+        host = parsed.hostname
+        port = parsed.port or 5432
+        db = (parsed.path or "/").lstrip("/") or "?"
+        return f"{user}@{host}:{port}/{db}"
+    except Exception:
+        return "(unparseable)"
+
+
 def normalize_database_url(raw: str) -> str:
     """Render/Heroku often supply postgres:// — SQLAlchemy needs postgresql+psycopg2://."""
     url = (raw or "").strip()
@@ -58,10 +100,28 @@ def normalize_database_url(raw: str) -> str:
     elif url.startswith("postgresql://") and "+psycopg2" not in url.split("://", 1)[0]:
         url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
-    url = prefer_render_internal_database_url(url)
+    if not is_supabase_url(url):
+        url = prefer_render_internal_database_url(url)
 
     # sslmode is applied via psycopg2 connect_args — keep URL clean to avoid conflicts.
     url = _strip_url_query_keys(url, "sslmode")
+    # SQLAlchemy + create_all() requires session pooler, not transaction pooler (6543).
+    if is_supabase_transaction_pooler(url):
+        url = to_supabase_session_pooler_url(url)
+    return url
+
+
+def resolve_database_bootstrap_url(runtime_url: str) -> str:
+    """
+    Schema bootstrap URL.
+    Prefer DATABASE_DIRECT_URL (Supabase direct / session pooler), else upgrade transaction pooler → session.
+    """
+    direct = (os.getenv("DATABASE_DIRECT_URL") or os.getenv("DATABASE_MIGRATION_URL") or "").strip()
+    if direct:
+        return normalize_database_url(direct)
+    url = normalize_database_url(runtime_url)
+    if is_supabase_transaction_pooler(url):
+        return to_supabase_session_pooler_url(url)
     return url
 
 
@@ -83,6 +143,10 @@ class Settings:
         DATABASE_URL: str = f"sqlite:///{(_backend_dir / _rel).resolve().as_posix()}"
     else:
         DATABASE_URL: str = normalize_database_url(_raw_database_url)
+    _bootstrap_raw: str = resolve_database_bootstrap_url(_raw_database_url if not _raw_database_url.startswith("sqlite") else DATABASE_URL)
+    DATABASE_BOOTSTRAP_URL: str = (
+        DATABASE_URL if _raw_database_url.startswith("sqlite") else _bootstrap_raw
+    )
     SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me")
     ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))

@@ -7,6 +7,9 @@ export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 
+echo "[start_render.sh] Bootstrapping database schema + admin..."
+python scripts/bootstrap_db.py || echo "[start_render.sh] bootstrap_db failed — API will retry on first request"
+
 echo "[start_render.sh] Running create_admin.py..."
 python scripts/create_admin.py || echo "[start_render.sh] create_admin skipped (admin may already exist)"
 
