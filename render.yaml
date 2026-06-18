@@ -14,7 +14,6 @@ services:
     autoDeploy: true
     buildCommand: pip install -r requirements.txt
     startCommand: bash scripts/start_render.sh
-    preDeployCommand: python scripts/create_admin.py
     envVars:
       - key: ENVIRONMENT
         value: production
@@ -46,7 +45,7 @@ services:
       - key: NODE_VERSION
         value: "20"
       - key: VITE_API_BASE_URL
-        value: https://taeen-quality-platform.onrender.com
+        value: https://taeen-backend.onrender.com
     routes:
       # SPA fallback — React Router (history API). Render serves real files first;
       # these rewrites apply only when no static asset exists at the path.

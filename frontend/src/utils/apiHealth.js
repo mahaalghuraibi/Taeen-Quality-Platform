@@ -1,4 +1,9 @@
-import { API_BASE_URL, PRODUCTION_API_ORIGIN } from "../config/apiBase.js";
+import {
+  API_BASE_URL,
+  PRODUCTION_API_CANDIDATES,
+  PRODUCTION_API_ORIGIN,
+  setRuntimeApiBase,
+} from "../config/apiBase.js";
 import { fetchWithTimeout } from "./fetchWithTimeout.js";
 
 /** Skip redundant /health probes for a few minutes after any successful API call. */
@@ -36,9 +41,27 @@ function apiOrigin() {
   return (API_BASE_URL || PRODUCTION_API_ORIGIN).replace(/\/+$/, "");
 }
 
-function probeUrls() {
-  const base = apiOrigin();
-  return [`${base}/health`, `${base}/`];
+function productionOriginsToTry() {
+  const current = apiOrigin();
+  const ordered = [current, ...PRODUCTION_API_CANDIDATES.map((u) => u.replace(/\/+$/, ""))];
+  return [...new Set(ordered.filter(Boolean))];
+}
+
+function probeUrlsForOrigin(base) {
+  const origin = String(base || "").replace(/\/+$/, "");
+  if (!origin) return [];
+  return [`${origin}/health`, `${origin}/`];
+}
+
+function isFastApiHealthBody(text) {
+  const raw = String(text || "").trim();
+  if (!raw.startsWith("{")) return false;
+  try {
+    const data = JSON.parse(raw);
+    return data?.status === "ok" || typeof data?.message === "string";
+  } catch {
+    return false;
+  }
 }
 
 function isRenderWakingHttp(status) {
@@ -56,47 +79,52 @@ function sleep(ms) {
 export async function probeApiHealth(options = {}) {
   const maxAttempts = options.maxAttempts ?? (import.meta.env.PROD ? 3 : 2);
   const timeoutMs = options.timeoutMs ?? (import.meta.env.PROD ? 45_000 : 20_000);
-  const urls = probeUrls();
+  const origins = productionOriginsToTry();
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    for (const url of urls) {
-      try {
-        const res = await fetchWithTimeout(
-          url,
-          { method: "GET", headers: { Accept: "application/json" } },
-          timeoutMs,
-        );
-        if (res.status === 200) {
-          markApiAlive();
-          return { status: API_STATUS.ONLINE, reachable: true, httpStatus: res.status };
-        }
-        if (isRenderWakingHttp(res.status)) {
-          if (attempt < maxAttempts) {
-            await sleep(4000);
+  for (const origin of origins) {
+    const urls = probeUrlsForOrigin(origin);
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      for (const url of urls) {
+        try {
+          const res = await fetchWithTimeout(
+            url,
+            { method: "GET", headers: { Accept: "application/json" } },
+            timeoutMs,
+          );
+          const bodyText = await res.text().catch(() => "");
+          if (res.status === 200 && isFastApiHealthBody(bodyText)) {
+            setRuntimeApiBase(origin);
+            markApiAlive();
+            return { status: API_STATUS.ONLINE, reachable: true, httpStatus: res.status, origin };
+          }
+          if (isRenderWakingHttp(res.status)) {
+            if (attempt < maxAttempts) {
+              await sleep(4000);
+              break;
+            }
+            return { status: API_STATUS.WAKING, reachable: false, httpStatus: res.status, origin };
+          }
+        } catch (err) {
+          const isTimeout = err?.code === "TIMEOUT";
+          const isNetwork = err instanceof TypeError;
+          if (attempt < maxAttempts && isTimeout) {
+            await sleep(3000);
             break;
           }
-          return { status: API_STATUS.WAKING, reachable: false, httpStatus: res.status };
-        }
-        // Host answered (404 on wrong path still means API process is up).
-        if (res.status > 0 && res.status < 500) {
-          markApiAlive();
-          return { status: API_STATUS.ONLINE, reachable: true, httpStatus: res.status };
-        }
-      } catch (err) {
-        const isTimeout = err?.code === "TIMEOUT";
-        const isNetwork = err instanceof TypeError;
-        if (attempt < maxAttempts && isTimeout) {
-          await sleep(3000);
-          break;
-        }
-        if (isTimeout) {
-          return { status: API_STATUS.WAKING, reachable: false, reason: "timeout" };
-        }
-        if (isNetwork) {
-          return { status: API_STATUS.OFFLINE, reachable: false, reason: "network" };
-        }
-        if (attempt === maxAttempts) {
-          return { status: API_STATUS.OFFLINE, reachable: false, reason: String(err?.message || err) };
+          if (isTimeout && origin === origins[origins.length - 1] && attempt === maxAttempts) {
+            return { status: API_STATUS.WAKING, reachable: false, reason: "timeout", origin };
+          }
+          if (isNetwork && origin === origins[origins.length - 1] && attempt === maxAttempts) {
+            return { status: API_STATUS.OFFLINE, reachable: false, reason: "network", origin };
+          }
+          if (attempt === maxAttempts && origin === origins[origins.length - 1]) {
+            return {
+              status: API_STATUS.OFFLINE,
+              reachable: false,
+              reason: String(err?.message || err),
+              origin,
+            };
+          }
         }
       }
     }

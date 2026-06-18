@@ -3,7 +3,7 @@
  *
  * Priority:
  * 1) VITE_API_BASE_URL (set at build time on Render / Railway)
- * 2) Known Render pairing fallback (taeen-quality-frontend → taeen-quality-platform)
+ * 2) Known Render pairing fallback (taeen-quality-frontend → taeen-backend)
  * 3) Dev only: localStorage `ska_api_base`
  */
 function normalizeBase(raw) {
@@ -12,8 +12,39 @@ function normalizeBase(raw) {
     .replace(/\/+$/, "");
 }
 
-/** Render production backend (used when VITE_API_BASE_URL is missing from the build). */
-export const PRODUCTION_API_ORIGIN = "https://taeen-quality-platform.onrender.com";
+/** Known Render backend hosts (try in order during login if primary is down). */
+export const PRODUCTION_API_CANDIDATES = [
+  "https://taeen-backend.onrender.com",
+  "https://taeen-quality-platform.onrender.com",
+];
+
+/** Primary production backend (build-time default). */
+export const PRODUCTION_API_ORIGIN = PRODUCTION_API_CANDIDATES[0];
+
+const RUNTIME_API_BASE_KEY = "ska_runtime_api_base";
+let _runtimeApiBase = "";
+
+export function setRuntimeApiBase(raw) {
+  _runtimeApiBase = normalizeBase(raw);
+  if (typeof window === "undefined" || !_runtimeApiBase) return;
+  try {
+    window.sessionStorage?.setItem(RUNTIME_API_BASE_KEY, _runtimeApiBase);
+  } catch {
+    /* private mode */
+  }
+}
+
+function loadRuntimeApiBase() {
+  if (_runtimeApiBase) return _runtimeApiBase;
+  if (typeof window === "undefined") return "";
+  try {
+    const v = window.sessionStorage?.getItem(RUNTIME_API_BASE_KEY);
+    _runtimeApiBase = normalizeBase(v);
+  } catch {
+    _runtimeApiBase = "";
+  }
+  return _runtimeApiBase;
+}
 
 function storageApiBase() {
   if (typeof window === "undefined") return "";
@@ -49,7 +80,7 @@ export function clearStaleApiBaseOverride() {
     if (!v) return;
     const n = normalizeBase(v);
     if (!n) return;
-    if (STALE_API_BASE_HOSTS.includes(n) || n !== PRODUCTION_API_ORIGIN) {
+    if (STALE_API_BASE_HOSTS.includes(n)) {
       window.localStorage.removeItem("ska_api_base");
     }
   } catch {
@@ -68,10 +99,22 @@ function devApiBaseDefault() {
   return "";
 }
 
+function resolveApiBase() {
+  const fromEnvNow = normalizeBase(import.meta.env.VITE_API_BASE_URL);
+  return (
+    fromEnvNow ||
+    loadRuntimeApiBase() ||
+    inferProductionApiBase() ||
+    devApiBaseDefault() ||
+    storageApiBase()
+  );
+}
+
 const fromEnv = normalizeBase(import.meta.env.VITE_API_BASE_URL);
+const runtimeBase = loadRuntimeApiBase();
 
 export const API_BASE_URL =
-  fromEnv || inferProductionApiBase() || devApiBaseDefault() || storageApiBase();
+  fromEnv || runtimeBase || inferProductionApiBase() || devApiBaseDefault() || storageApiBase();
 
 /**
  * @param {string} path - Absolute path starting with `/` or full `http(s)://`, `blob:`, `data:` URL.
@@ -81,6 +124,7 @@ export function apiUrl(path) {
   if (!s) return s;
   if (/^(https?:|blob:|data:)/i.test(s)) return s;
   const p = s.startsWith("/") ? s : `/${s}`;
-  if (!API_BASE_URL) return p;
-  return `${API_BASE_URL}${p}`;
+  const base = resolveApiBase();
+  if (!base) return p;
+  return `${base}${p}`;
 }

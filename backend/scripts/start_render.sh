@@ -2,9 +2,15 @@
 set -e
 
 # Render free tier: single worker, tight keep-alive, low backlog to avoid OOM.
-# MALLOC_TRIM_THRESHOLD_ helps the Python allocator return freed heap to the OS after GC.
 export MALLOC_TRIM_THRESHOLD_=65536
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
 
+echo "[start_render.sh] Running create_admin.py..."
+python scripts/create_admin.py || echo "[start_render.sh] create_admin skipped (admin may already exist)"
+
+echo "[start_render.sh] Starting uvicorn on port ${PORT:-10000}..."
 exec uvicorn app.main:app \
   --host 0.0.0.0 \
   --port "${PORT:-10000}" \

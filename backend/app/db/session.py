@@ -51,6 +51,10 @@ def init_db() -> None:
     _ensure_default_tenant()
     _seed_default_branches()
     _seed_meal_types()
+    # Guarantee predictable login accounts on local/dev SQLite (no-op on PostgreSQL).
+    _seed_dev_admin_if_empty()
+    _seed_default_supervisor()
+    _ensure_required_login_accounts()
 
 
 def _ensure_camera_monitoring_columns() -> None:

@@ -93,8 +93,18 @@ export default function LoginPage() {
     setStatusText("جاري الاتصال بالخادم…");
     const loginUrl = apiUrl("/api/v1/auth/login");
     try {
-      void wakeApiBeforeAuth();
+      const apiUp = await wakeApiBeforeAuth({
+        maxAttempts: import.meta.env.PROD ? 2 : 1,
+        timeoutMs: import.meta.env.PROD ? 25_000 : 15_000,
+      });
+      if (!apiUp) {
+        setError(
+          "تعذر الاتصال بالخادم. قد يكون متوقفاً أو قيد إعادة التشغيل — انتظر دقيقة ثم أعد المحاولة. إن استمرت المشكلة، تحقق من حالة خدمة Backend على Render.",
+        );
+        return;
+      }
 
+      setStatusText("جاري تسجيل الدخول…");
       const body = buildLoginFormBody(loginId, password);
       const res = await fetchWithTimeout(
         loginUrl,

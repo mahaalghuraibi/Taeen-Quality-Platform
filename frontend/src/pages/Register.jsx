@@ -130,7 +130,10 @@ export default function RegisterPage() {
   const loadBranches = useCallback(async () => {
     setBranchesLoading(true);
     try {
-      void wakeApiBeforeAuth();
+      await wakeApiBeforeAuth({
+        maxAttempts: import.meta.env.PROD ? 2 : 1,
+        timeoutMs: import.meta.env.PROD ? 25_000 : 15_000,
+      });
       const res = await fetchWithTimeout(
         apiUrl("/api/v1/branches/public"),
         { headers: { Accept: "application/json" } },
@@ -194,7 +197,16 @@ export default function RegisterPage() {
     setLoading(true);
     const registerUrl = apiUrl("/api/v1/auth/users");
     try {
-      void wakeApiBeforeAuth();
+      const apiUp = await wakeApiBeforeAuth({
+        maxAttempts: import.meta.env.PROD ? 2 : 1,
+        timeoutMs: import.meta.env.PROD ? 25_000 : 15_000,
+      });
+      if (!apiUp) {
+        setError(
+          "تعذر الاتصال بالخادم. قد يكون متوقفاً أو قيد إعادة التشغيل — انتظر دقيقة ثم أعد المحاولة.",
+        );
+        return;
+      }
 
       const payload = buildRegisterPayload({
         email: safeEmail,

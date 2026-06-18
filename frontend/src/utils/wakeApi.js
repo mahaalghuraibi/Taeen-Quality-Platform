@@ -19,16 +19,16 @@ function apiBase() {
 /**
  * Best-effort ping so Render wakes the service.
  * Single in-flight request is shared across callers.
+ * @param {{ maxAttempts?: number, timeoutMs?: number }} [options]
  * @returns {Promise<boolean>} true if API responded with HTTP 200 on /health or /
  */
-export async function wakeApiBeforeAuth() {
+export async function wakeApiBeforeAuth(options = {}) {
   if (isApiRecentlyAlive()) return true;
   if (_inFlightWake) return _inFlightWake;
+  const maxAttempts = options.maxAttempts ?? WAKE_ATTEMPTS;
+  const timeoutMs = options.timeoutMs ?? WAKE_TIMEOUT_MS;
   _inFlightWake = (async () => {
-    const result = await probeApiHealth({
-      maxAttempts: WAKE_ATTEMPTS,
-      timeoutMs: WAKE_TIMEOUT_MS,
-    });
+    const result = await probeApiHealth({ maxAttempts, timeoutMs });
     if (result.reachable) {
       markApiAlive();
       return true;

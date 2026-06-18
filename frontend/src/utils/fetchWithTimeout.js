@@ -55,7 +55,7 @@ export function formatMonitoringFetchError(err, fallback = "تعذر تحليل 
 
 export function formatFetchError(err, fallback = "تعذر الاتصال بالخادم.") {
   if (err?.code === "TIMEOUT") {
-    return "انتهت مهلة الاتصال بالخادم. تحقق من الشبكة وحاول مرة أخرى.";
+    return "انتهت مهلة الاتصال بالخادم. أول طلب بعد إيقاف الخادم قد يستغرق 1–2 دقيقة — انتظر ثم أعد المحاولة.";
   }
   if (err instanceof TypeError) {
     return "تعذر الاتصال بالخادم. تحقق من اتصال الإنترنت.";
