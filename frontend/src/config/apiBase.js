@@ -3,7 +3,7 @@
  *
  * Priority:
  * 1) VITE_API_BASE_URL (set at build time on Render / Railway)
- * 2) Known Render pairing fallback (taeen-quality-frontend → taeen-backend)
+ * 2) Known Render pairing fallback (taeen-quality-frontend → taeen-quality-platform)
  * 3) Dev only: localStorage `ska_api_base`
  */
 function normalizeBase(raw) {
@@ -14,8 +14,8 @@ function normalizeBase(raw) {
 
 /** Known Render backend hosts (try in order during login if primary is down). */
 export const PRODUCTION_API_CANDIDATES = [
-  "https://taeen-backend.onrender.com",
   "https://taeen-quality-platform.onrender.com",
+  "https://taeen-backend.onrender.com",
 ];
 
 /** Primary production backend (build-time default). */

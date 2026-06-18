@@ -1,24 +1,27 @@
 # Render Blueprint — adjust service name / region / plan as needed.
 # Docs: https://render.com/docs/blueprint-spec
 #
-# Set DATABASE_URL, SECRET_KEY, CORS_ALLOW_ORIGINS, SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD,
+# Set DATABASE_URL, SECRET_KEY, SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD,
 # DISH_MEDIA_DIR (persistent disk path), and AI keys in the Render dashboard.
-# YOLO PPE weights (hansung_ppe.pt): runtime download on first analyze-frame (YOLO_AUTO_DOWNLOAD).
-# mask_best.pt / glove_best.pt / hairnet_best.pt are NOT in git — upload to persistent disk or train locally.
 
 services:
   - type: web
-    name: taeen-backend
+    name: taeen-quality-platform
     runtime: python
     rootDir: backend
     autoDeploy: true
     buildCommand: pip install -r requirements.txt
     startCommand: bash scripts/start_render.sh
+    healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
         value: production
       - key: PYTHON_VERSION
         value: "3.11.9"
+      - key: CORS_ALLOW_ORIGINS
+        value: https://taeen-quality-frontend.onrender.com
+      - key: ALLOWED_HOSTS
+        value: taeen-quality-platform.onrender.com,taeen-backend.onrender.com
       - key: YOLO_AUTO_DOWNLOAD
         value: "true"
       - key: YOLO_ENABLED
@@ -28,16 +31,11 @@ services:
       - key: YOLO_USE_PERSON_DETECTOR
         value: "false"
 
-  # Static SPA — auto-deploys on every push to main.
-  # After changing `routes`, run Dashboard → Blueprint → Sync (or add the same
-  # /* → /index.html Rewrite rule under Redirects/Rewrites for this service).
   - type: web
     name: taeen-quality-frontend
     runtime: static
     rootDir: frontend
     autoDeploy: true
-    # Post-build copies index.html into each route dir (see spa-static-paths.mjs).
-    # Do not ship dist/404.html — Render uses it with HTTP 404 for deep links.
     buildCommand: npm ci && npm run build && rm -f dist/404.html
     staticPublishPath: dist
     pullRequestPreviewsEnabled: true
@@ -45,11 +43,8 @@ services:
       - key: NODE_VERSION
         value: "20"
       - key: VITE_API_BASE_URL
-        value: https://taeen-backend.onrender.com
+        value: https://taeen-quality-platform.onrender.com
     routes:
-      # SPA fallback — React Router (history API). Render serves real files first;
-      # these rewrites apply only when no static asset exists at the path.
-      # Explicit paths help when blueprint rules need re-sync; /* is the catch-all.
       - type: rewrite
         source: /login
         destination: /index.html

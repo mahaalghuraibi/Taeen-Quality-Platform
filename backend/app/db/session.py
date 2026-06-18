@@ -10,7 +10,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-def _engine_kwargs() -> dict:
+def _engine_kwargs(*, sslmode: str = "require") -> dict:
     kwargs: dict = {
         "pool_pre_ping": True,
         "pool_recycle": 300,
@@ -19,21 +19,34 @@ def _engine_kwargs() -> dict:
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
     elif url.startswith("postgresql"):
-        kwargs["connect_args"] = {
-            "sslmode": "require",
+        host_part = url.split("@", 1)[-1] if "@" in url else url
+        is_local = any(x in host_part for x in ("localhost", "127.0.0.1"))
+        connect_args: dict = {
             "connect_timeout": 20,
             "keepalives": 1,
             "keepalives_idle": 30,
             "keepalives_interval": 10,
             "keepalives_count": 5,
         }
+        if not is_local:
+            connect_args["sslmode"] = sslmode
+        kwargs["connect_args"] = connect_args
         kwargs["pool_size"] = 5
         kwargs["max_overflow"] = 10
     return kwargs
 
 
-engine = create_engine(settings.DATABASE_URL, **_engine_kwargs())
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+def _rebuild_engine(*, sslmode: str = "require") -> None:
+    global engine, SessionLocal
+    try:
+        engine.dispose()
+    except Exception:
+        pass
+    engine = create_engine(settings.DATABASE_URL, **_engine_kwargs(sslmode=sslmode))
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+_rebuild_engine(sslmode="require")
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -78,23 +91,31 @@ def init_db() -> None:
     _seed_dev_admin_if_empty()
     _seed_default_supervisor()
     _ensure_required_login_accounts()
+    from app.services.admin_seed import ensure_seeded_admin_from_env
+
+    ensure_seeded_admin_from_env()
 
 
-def init_db_with_retry(*, max_attempts: int = 6, delay_sec: float = 5.0) -> None:
+def init_db_with_retry(*, max_attempts: int = 8, delay_sec: float = 5.0) -> None:
     """Retry DB bootstrap — Render Postgres may need a few seconds after wake."""
+    ssl_modes = ["require", "require", "prefer", "prefer"]
     last_exc: Exception | None = None
     for attempt in range(1, max_attempts + 1):
+        sslmode = ssl_modes[min(attempt - 1, len(ssl_modes) - 1)]
+        if attempt > 1 or sslmode != "require":
+            _rebuild_engine(sslmode=sslmode)
         try:
             init_db()
             if attempt > 1:
-                logger.info("init_db succeeded on attempt %s/%s", attempt, max_attempts)
+                logger.info("init_db succeeded on attempt %s/%s (sslmode=%s)", attempt, max_attempts, sslmode)
             return
         except Exception as exc:
             last_exc = exc
             logger.warning(
-                "init_db attempt %s/%s failed: %s",
+                "init_db attempt %s/%s failed (sslmode=%s): %s",
                 attempt,
                 max_attempts,
+                sslmode,
                 exc,
             )
             if attempt < max_attempts:
@@ -131,6 +152,9 @@ def _drop_legacy_monitoring_tables() -> None:
             else:
                 db.execute(text(f"DROP TABLE IF EXISTS {name} CASCADE"))
         db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("legacy table cleanup skipped: %s", exc)
     finally:
         db.close()
 

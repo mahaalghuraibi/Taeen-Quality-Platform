@@ -1,5 +1,7 @@
 import os
+import re
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from dotenv import load_dotenv
 
@@ -20,6 +22,31 @@ def _parse_bool_env(name: str, default: bool = False) -> bool:
     return default
 
 
+def prefer_render_internal_database_url(url: str) -> str:
+    """On Render, use internal DB hostname (dpg-xxx-a) instead of external regional FQDN."""
+    if not url or not url.startswith("postgresql"):
+        return url
+    on_render = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
+    if not on_render:
+        return url
+    return re.sub(
+        r"@(dpg-[a-z0-9]+-a)\.[^/:]+",
+        r"@\1",
+        url,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+
+
+def _strip_url_query_keys(url: str, *keys: str) -> str:
+    parsed = urlparse(url)
+    if not parsed.query:
+        return url
+    drop = {k.lower() for k in keys}
+    kept = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k.lower() not in drop]
+    return urlunparse(parsed._replace(query=urlencode(kept)))
+
+
 def normalize_database_url(raw: str) -> str:
     """Render/Heroku often supply postgres:// — SQLAlchemy needs postgresql+psycopg2://."""
     url = (raw or "").strip()
@@ -30,13 +57,10 @@ def normalize_database_url(raw: str) -> str:
     elif url.startswith("postgresql://") and "+psycopg2" not in url.split("://", 1)[0]:
         url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
-    # Remote Postgres (Render, etc.) — enforce SSL if not already in the URL.
-    lower = url.lower()
-    if lower.startswith("postgresql") and "sqlite" not in lower:
-        host_part = url.split("@", 1)[-1] if "@" in url else url
-        is_local = any(x in host_part for x in ("localhost", "127.0.0.1", "@/"))
-        if not is_local and "sslmode=" not in lower:
-            url += ("&" if "?" in url else "?") + "sslmode=require"
+    url = prefer_render_internal_database_url(url)
+
+    # sslmode is applied via psycopg2 connect_args — keep URL clean to avoid conflicts.
+    url = _strip_url_query_keys(url, "sslmode")
     return url
 
 
