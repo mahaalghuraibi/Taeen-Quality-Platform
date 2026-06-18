@@ -16,7 +16,7 @@ import app.models  # noqa: F401 - register ORM mappers before routes import User
 from app.api.router import api_router
 from app.core.config import settings, validate_settings_for_startup
 from app.core.limiter import limiter
-from app.db.session import init_db
+from app.db.session import init_db_with_retry
 from app.middleware.security_headers import SecurityHeadersMiddleware
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ async def lifespan(_app: FastAPI):
     if yolo_warning:
         logger.warning(yolo_warning.strip())
 
-    init_db()
+    init_db_with_retry()
     from app.services.dish_image_storage import dish_media_dir, migrate_legacy_dish_images_to_dishes
 
     dish_media_dir()

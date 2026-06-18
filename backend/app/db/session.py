@@ -1,15 +1,38 @@
 from collections.abc import Generator
+import logging
+import time
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
 
-engine_kwargs: dict = {"pool_pre_ping": True}
-if settings.DATABASE_URL.startswith("sqlite"):
-    engine_kwargs["connect_args"] = {"check_same_thread": False}
+logger = logging.getLogger(__name__)
 
-engine = create_engine(settings.DATABASE_URL, **engine_kwargs)
+
+def _engine_kwargs() -> dict:
+    kwargs: dict = {
+        "pool_pre_ping": True,
+        "pool_recycle": 300,
+    }
+    url = settings.DATABASE_URL
+    if url.startswith("sqlite"):
+        kwargs["connect_args"] = {"check_same_thread": False}
+    elif url.startswith("postgresql"):
+        kwargs["connect_args"] = {
+            "sslmode": "require",
+            "connect_timeout": 20,
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5,
+        }
+        kwargs["pool_size"] = 5
+        kwargs["max_overflow"] = 10
+    return kwargs
+
+
+engine = create_engine(settings.DATABASE_URL, **_engine_kwargs())
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -55,6 +78,29 @@ def init_db() -> None:
     _seed_dev_admin_if_empty()
     _seed_default_supervisor()
     _ensure_required_login_accounts()
+
+
+def init_db_with_retry(*, max_attempts: int = 6, delay_sec: float = 5.0) -> None:
+    """Retry DB bootstrap — Render Postgres may need a few seconds after wake."""
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            init_db()
+            if attempt > 1:
+                logger.info("init_db succeeded on attempt %s/%s", attempt, max_attempts)
+            return
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "init_db attempt %s/%s failed: %s",
+                attempt,
+                max_attempts,
+                exc,
+            )
+            if attempt < max_attempts:
+                time.sleep(delay_sec)
+    assert last_exc is not None
+    raise last_exc
 
 
 def _ensure_camera_monitoring_columns() -> None:

@@ -20,6 +20,26 @@ def _parse_bool_env(name: str, default: bool = False) -> bool:
     return default
 
 
+def normalize_database_url(raw: str) -> str:
+    """Render/Heroku often supply postgres:// — SQLAlchemy needs postgresql+psycopg2://."""
+    url = (raw or "").strip()
+    if not url:
+        return url
+    if url.startswith("postgres://"):
+        url = "postgresql+psycopg2://" + url[len("postgres://") :]
+    elif url.startswith("postgresql://") and "+psycopg2" not in url.split("://", 1)[0]:
+        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+
+    # Remote Postgres (Render, etc.) — enforce SSL if not already in the URL.
+    lower = url.lower()
+    if lower.startswith("postgresql") and "sqlite" not in lower:
+        host_part = url.split("@", 1)[-1] if "@" in url else url
+        is_local = any(x in host_part for x in ("localhost", "127.0.0.1", "@/"))
+        if not is_local and "sslmode=" not in lower:
+            url += ("&" if "?" in url else "?") + "sslmode=require"
+    return url
+
+
 class Settings:
     PROJECT_NAME: str = os.getenv("PROJECT_NAME", "Quality Platform API")
     # production | development — controls error detail exposure
@@ -37,7 +57,7 @@ class Settings:
         _rel = _raw_database_url.removeprefix("sqlite:///./")
         DATABASE_URL: str = f"sqlite:///{(_backend_dir / _rel).resolve().as_posix()}"
     else:
-        DATABASE_URL: str = _raw_database_url
+        DATABASE_URL: str = normalize_database_url(_raw_database_url)
     SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me")
     ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
