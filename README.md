@@ -124,6 +124,8 @@ python scripts/create_admin.py
 
 Blueprint example: [`render.yaml`](render.yaml) (`preDeployCommand` + `startCommand` as above). Customize the service name, `envVars`, and attach your PostgreSQL database in the Render dashboard.
 
+> **Account migration note:** User accounts from the old Render Postgres database were **not** migrated to Supabase automatically. After switching to Supabase, staff and supervisors must **create new accounts** via signup (or an admin must recreate them) unless you run a dedicated migration script.
+
 ### Frontend setup
 
 ```bash

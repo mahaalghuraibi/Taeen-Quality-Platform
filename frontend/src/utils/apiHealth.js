@@ -1,6 +1,5 @@
 import {
   API_BASE_URL,
-  PRODUCTION_API_CANDIDATES,
   PRODUCTION_API_ORIGIN,
   setRuntimeApiBase,
 } from "../config/apiBase.js";
@@ -41,10 +40,9 @@ function apiOrigin() {
   return (API_BASE_URL || PRODUCTION_API_ORIGIN).replace(/\/+$/, "");
 }
 
-function productionOriginsToTry() {
-  const current = apiOrigin();
-  const ordered = [current, ...PRODUCTION_API_CANDIDATES.map((u) => u.replace(/\/+$/, ""))];
-  return [...new Set(ordered.filter(Boolean))];
+function originsToProbe() {
+  const origin = apiOrigin();
+  return origin ? [origin] : [];
 }
 
 function probeUrlsForOrigin(base) {
@@ -74,12 +72,13 @@ function sleep(ms) {
 
 /**
  * Probe backend reachability (Render cold start aware).
+ * Production probes only the canonical API host — no legacy fallback hosts.
  * @returns {Promise<{ status: string, reachable: boolean, httpStatus?: number }>}
  */
 export async function probeApiHealth(options = {}) {
   const maxAttempts = options.maxAttempts ?? (import.meta.env.PROD ? 3 : 2);
   const timeoutMs = options.timeoutMs ?? (import.meta.env.PROD ? 45_000 : 20_000);
-  const origins = productionOriginsToTry();
+  const origins = originsToProbe();
 
   for (const origin of origins) {
     const urls = probeUrlsForOrigin(origin);

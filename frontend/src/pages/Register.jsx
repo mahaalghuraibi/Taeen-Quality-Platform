@@ -4,11 +4,13 @@ import { apiUrl } from "../config/apiBase.js";
 import SKALogo from "../components/SKALogo.jsx";
 import SignupSuccessModal from "../components/auth/SignupSuccessModal.jsx";
 import { PLATFORM_BRAND, PUBLIC_PAGE_TITLES } from "../constants/branding.js";
-import { AUTH_FETCH_TIMEOUT_MS, fetchWithTimeout, formatFetchError } from "../utils/fetchWithTimeout.js";
+import { AUTH_FETCH_TIMEOUT_MS, fetchWithTimeout } from "../utils/fetchWithTimeout.js";
 import { wakeApiBeforeAuth } from "../utils/wakeApi.js";
 import {
+  AUTH_ERROR_SERVER_UNAVAILABLE,
   buildRegisterPayload,
   formatAuthError,
+  formatAuthFetchError,
   logAuthFailure,
 } from "../utils/authApiError.js";
 
@@ -202,9 +204,7 @@ export default function RegisterPage() {
         timeoutMs: import.meta.env.PROD ? 25_000 : 15_000,
       });
       if (!apiUp) {
-        setError(
-          "تعذر الاتصال بالخادم. قد يكون متوقفاً أو قيد إعادة التشغيل — انتظر دقيقة ثم أعد المحاولة.",
-        );
+        setError(AUTH_ERROR_SERVER_UNAVAILABLE);
         return;
       }
 
@@ -239,7 +239,7 @@ export default function RegisterPage() {
       setError(formatAuthError(res.status, data, "تعذر إنشاء الحساب."));
     } catch (err) {
       console.error("[Register] request failed:", registerUrl, err);
-      setError(formatFetchError(err, "تعذر إنشاء الحساب. تحقق من الاتصال بالإنترنت."));
+      setError(formatAuthFetchError(err, "تعذر إنشاء الحساب."));
     } finally {
       inFlightRef.current = false;
       setLoading(false);
@@ -622,7 +622,7 @@ function BranchRequestModal({ open, defaultName, defaultEmail, onClose, onSubmit
       const detail = typeof data?.detail === "string" ? data.detail : "";
       setErr(detail || "تعذر إرسال الطلب. حاول مرة أخرى.");
     } catch (e2) {
-      setErr(formatFetchError(e2, "تعذر إرسال الطلب. تحقق من الاتصال."));
+      setErr(formatAuthFetchError(e2, "تعذر إرسال الطلب."));
     } finally {
       setSubmitting(false);
     }

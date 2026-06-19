@@ -4,11 +4,13 @@ import { ACCESS_TOKEN_KEY, CURRENT_USER_ME_URLS, USER_INFO_KEY, USER_ROLE_KEY } 
 import { apiUrl } from "../config/apiBase.js";
 import SKALogo from "../components/SKALogo.jsx";
 import { PLATFORM_BRAND, PUBLIC_PAGE_TITLES } from "../constants/branding.js";
-import { AUTH_FETCH_TIMEOUT_MS, fetchWithTimeout, formatFetchError } from "../utils/fetchWithTimeout.js";
+import { AUTH_FETCH_TIMEOUT_MS, fetchWithTimeout } from "../utils/fetchWithTimeout.js";
 import { wakeApiBeforeAuth } from "../utils/wakeApi.js";
 import {
+  AUTH_ERROR_SERVER_UNAVAILABLE,
   buildLoginFormBody,
   formatAuthError,
+  formatAuthFetchError,
   logAuthFailure,
 } from "../utils/authApiError.js";
 
@@ -98,9 +100,7 @@ export default function LoginPage() {
         timeoutMs: import.meta.env.PROD ? 25_000 : 15_000,
       });
       if (!apiUp) {
-        setError(
-          "تعذر الاتصال بالخادم. قد يكون متوقفاً أو قيد إعادة التشغيل — انتظر دقيقة ثم أعد المحاولة. إن استمرت المشكلة، تحقق من حالة خدمة Backend على Render.",
-        );
+        setError(AUTH_ERROR_SERVER_UNAVAILABLE);
         return;
       }
 
@@ -197,7 +197,7 @@ export default function LoginPage() {
       navigate(dest, { replace: true });
     } catch (err) {
       console.error("[Login] request failed:", loginUrl, err);
-      setError(formatFetchError(err, "تعذر تسجيل الدخول. تحقق من الاتصال بالإنترنت."));
+      setError(formatAuthFetchError(err, "تعذر تسجيل الدخول."));
     } finally {
       inFlightRef.current = false;
       setLoading(false);

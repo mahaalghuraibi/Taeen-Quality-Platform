@@ -22,6 +22,36 @@ export function parseFastApiDetail(detail) {
   return "";
 }
 
+/** Mobile-safe: server unreachable / cold start / gateway errors. */
+export const AUTH_ERROR_SERVER_UNAVAILABLE =
+  "الخادم غير متاح حالياً. تحقق من اتصال الإنترنت، انتظر دقيقة ثم أعد المحاولة.";
+
+/** Mobile-safe: wrong email/password. */
+export const AUTH_ERROR_INVALID_CREDENTIALS = "بيانات الدخول غير صحيحة.";
+
+/** Mobile-safe: duplicate registration. */
+export const AUTH_ERROR_ACCOUNT_EXISTS =
+  "الحساب موجود مسبقاً. سجّل الدخول أو استخدم بريداً إلكترونياً مختلفاً.";
+
+/** Mobile-safe: database / persistence layer failure. */
+export const AUTH_ERROR_DATABASE_UNAVAILABLE =
+  "قاعدة البيانات غير متاحة مؤقتاً. حاول مرة أخرى بعد دقيقة.";
+
+/**
+ * Network / timeout errors during login or register.
+ * @param {Error & { code?: string }} err
+ * @param {string} [fallback]
+ */
+export function formatAuthFetchError(err, fallback = AUTH_ERROR_SERVER_UNAVAILABLE) {
+  if (err?.code === "TIMEOUT") {
+    return "انتهت مهلة الاتصال بالخادم. أول طلب بعد إيقاف الخادم قد يستغرق 1–2 دقيقة — انتظر ثم أعد المحاولة.";
+  }
+  if (err instanceof TypeError) {
+    return AUTH_ERROR_SERVER_UNAVAILABLE;
+  }
+  return fallback;
+}
+
 /**
  * User-visible Arabic message for failed login/register responses.
  * @param {number} status
@@ -29,35 +59,41 @@ export function parseFastApiDetail(detail) {
  * @param {string} [fallback]
  */
 export function formatAuthError(status, body, fallback = "تعذر إكمال الطلب.") {
+  if (status === 401) return AUTH_ERROR_INVALID_CREDENTIALS;
+  if (status === 502 || status === 503 || status === 504) return AUTH_ERROR_SERVER_UNAVAILABLE;
+
   const fromDetail = parseFastApiDetail(body?.detail);
   if (fromDetail) {
     if (fromDetail === "طلب غير صالح") {
       return "البيانات المرسلة غير صالحة. تحقق من البريد الإلكتروني واسم المستخدم (حرفان على الأقل) وكلمة المرور.";
     }
-    if (fromDetail === "Email already exists") {
-      return "البريد الإلكتروني مسجّل مسبقاً. جرّب تسجيل الدخول أو استخدم بريداً آخر.";
-    }
-    if (fromDetail === "Username already exists") {
-      return "اسم المستخدم مستخدم مسبقاً. جرّب بريداً إلكترونياً مختلفاً.";
+    if (fromDetail === "Email already exists" || fromDetail === "Username already exists") {
+      return AUTH_ERROR_ACCOUNT_EXISTS;
     }
     if (fromDetail === "Username is required") {
       return "اسم المستخدم مطلوب.";
     }
     if (fromDetail === "بيانات الدخول غير صحيحة") {
-      return fromDetail;
+      return AUTH_ERROR_INVALID_CREDENTIALS;
+    }
+    if (/database|sqlalchemy|connection refused|could not connect/i.test(fromDetail)) {
+      return AUTH_ERROR_DATABASE_UNAVAILABLE;
+    }
+    if (fromDetail === "حدث خطأ أثناء معالجة الطلب" || fromDetail === "حدث خطأ داخلي") {
+      return AUTH_ERROR_DATABASE_UNAVAILABLE;
     }
     return fromDetail;
   }
   if (typeof body?.message === "string" && body.message.trim()) {
     return body.message.trim();
   }
-  if (status === 401) return "بيانات الدخول غير صحيحة.";
   if (status === 422) {
     return "البيانات المرسلة غير صالحة. راجع الحقول وحاول مرة أخرى.";
   }
   if (status === 400) return fallback;
+  if (status >= 500) return AUTH_ERROR_DATABASE_UNAVAILABLE;
   if (status === 200) {
-    return "استجابة غير متوقعة من الخادم (لا يوجد رمز دخول). تحقق من إعداد VITE_API_BASE_URL في نشر الواجهة.";
+    return "استجابة غير متوقعة من الخادم (لا يوجد رمز دخول).";
   }
   return `${fallback} (رمز ${status})`;
 }
