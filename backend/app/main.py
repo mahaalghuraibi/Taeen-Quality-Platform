@@ -14,7 +14,12 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 import app.models  # noqa: F401 - register ORM mappers before routes import User
 from app.api.router import api_router
-from app.core.config import database_host_from_url, sanitize_database_url_for_log, settings
+from app.core.config import (
+    database_host_from_url,
+    sanitize_database_url_for_log,
+    settings,
+    validate_settings_for_startup,
+)
 from app.core.limiter import limiter
 from app.db.session import init_db_with_retry
 from app.middleware.security_headers import SecurityHeadersMiddleware
