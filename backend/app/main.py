@@ -110,6 +110,12 @@ async def lifespan(_app: FastAPI):
     try:
         init_db_with_retry()
         _app.state.db_ready = True
+        from app.services.admin_seed import seed_production_admin
+
+        try:
+            seed_production_admin()
+        except Exception:
+            logger.exception("Admin seed failed at startup")
     except Exception as exc:
         _app.state.db_last_error = f"{type(exc).__name__}: {exc}"
         logger.exception(

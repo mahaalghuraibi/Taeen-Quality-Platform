@@ -21,6 +21,12 @@ def bootstrap_database(app) -> bool:
         init_db_with_retry(max_attempts=3, delay_sec=2.0)
         app.state.db_ready = True
         _last_bootstrap_error = None
+        from app.services.admin_seed import seed_production_admin
+
+        try:
+            seed_production_admin()
+        except Exception:
+            logger.exception("admin seed failed after database bootstrap")
         logger.info(
             "database bootstrap complete (runtime=%s bootstrap=%s)",
             sanitize_database_url_for_log(settings.DATABASE_URL),

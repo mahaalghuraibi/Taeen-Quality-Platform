@@ -174,9 +174,6 @@ def init_db() -> None:
         _seed_dev_admin_if_empty()
         _seed_default_supervisor()
         _ensure_required_login_accounts()
-        from app.services.admin_seed import ensure_seeded_admin_from_env
-
-        ensure_seeded_admin_from_env()
     finally:
         SessionLocal = _orig_session_local
 
