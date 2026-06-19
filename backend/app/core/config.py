@@ -2,13 +2,15 @@ import hashlib
 import os
 import re
 from pathlib import Path
-from urllib.parse import parse_qsl, quote_plus, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from dotenv import load_dotenv
 
 _backend_dir = Path(__file__).resolve().parents[2]
 
-load_dotenv(_backend_dir / ".env", override=True)
+# Production (Render): never let a shipped .env override platform env vars.
+_on_render = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
+load_dotenv(_backend_dir / ".env", override=not _on_render)
 
 
 def _parse_bool_env(name: str, default: bool = False) -> bool:
@@ -90,8 +92,22 @@ def sanitize_database_url_for_log(url: str) -> str:
         return "(unparseable)"
 
 
-def normalize_database_url(raw: str) -> str:
-    """Render/Heroku often supply postgres:// — SQLAlchemy needs postgresql+psycopg2://."""
+def database_host_from_url(url: str) -> str:
+    try:
+        parsed = urlparse(url)
+        if not parsed.hostname:
+            return "(empty)"
+        port = parsed.port or 5432
+        return f"{parsed.hostname}:{port}"
+    except Exception:
+        return "(unparseable)"
+
+
+def normalize_runtime_database_url(raw: str) -> str:
+    """
+    Minimal normalization for the runtime SQLAlchemy URL.
+    Keeps the host from Render/Supabase env exactly (pooler stays pooler).
+    """
     url = (raw or "").strip()
     if not url:
         return url
@@ -99,66 +115,40 @@ def normalize_database_url(raw: str) -> str:
         url = "postgresql+psycopg2://" + url[len("postgres://") :]
     elif url.startswith("postgresql://") and "+psycopg2" not in url.split("://", 1)[0]:
         url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
-
     if not is_supabase_url(url):
         url = prefer_render_internal_database_url(url)
-
-    # sslmode is applied via psycopg2 connect_args — keep URL clean to avoid conflicts.
     url = _strip_url_query_keys(url, "sslmode")
-    # SQLAlchemy + create_all() requires session pooler, not transaction pooler (6543).
     if is_supabase_transaction_pooler(url):
         url = to_supabase_session_pooler_url(url)
     return url
 
 
-def try_derive_supabase_direct_url(url: str) -> str | None:
-    """
-    Build Supabase direct connection URL from pooler URL.
-    Pooler user: postgres.<project-ref>  →  Direct user: postgres @ db.<ref>.supabase.co
-    """
-    parsed = urlparse(url)
-    user = parsed.username or ""
-    password = parsed.password or ""
-    if not password or not user.startswith("postgres."):
-        return None
-    project_ref = user.split(".", 1)[1].strip()
-    if not project_ref:
-        return None
-    return f"postgresql+psycopg2://postgres:{quote_plus(password)}@db.{project_ref}.supabase.co:5432/postgres"
+def normalize_database_url(raw: str) -> str:
+    """Alias — runtime URL normalization."""
+    return normalize_runtime_database_url(raw)
 
 
 def resolve_database_bootstrap_url(runtime_url: str) -> str:
     """
-    Schema bootstrap URL.
-    Prefer DATABASE_DIRECT_URL (Supabase direct / session pooler), else upgrade transaction pooler → session.
+    Optional schema-bootstrap URL (migrations/create_all only).
+    Uses DATABASE_DIRECT_URL / DATABASE_MIGRATION_URL when explicitly set;
+    otherwise same as runtime pooler URL. Never auto-derives db.*.supabase.co.
     """
     direct = (os.getenv("DATABASE_DIRECT_URL") or os.getenv("DATABASE_MIGRATION_URL") or "").strip()
     if direct:
-        return normalize_database_url(direct)
-    url = normalize_database_url(runtime_url)
-    if is_supabase_transaction_pooler(runtime_url):
-        return to_supabase_session_pooler_url(normalize_database_url(runtime_url))
-    return url
+        return normalize_runtime_database_url(direct)
+    return normalize_runtime_database_url(runtime_url)
 
 
 def supabase_bootstrap_url_candidates(runtime_url: str) -> list[str]:
-    """Ordered bootstrap URLs to try (deduplicated)."""
-    on_render = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
-    ordered: list[str] = []
+    """Bootstrap URLs to try — runtime pooler first; direct only if explicitly configured."""
+    runtime = normalize_runtime_database_url(runtime_url)
+    ordered: list[str] = [runtime]
     direct_env = (os.getenv("DATABASE_DIRECT_URL") or os.getenv("DATABASE_MIGRATION_URL") or "").strip()
-    if direct_env and not on_render:
-        ordered.append(normalize_database_url(direct_env))
-    normalized = normalize_database_url(runtime_url)
-    ordered.append(normalized)
-    if is_supabase_url(normalized):
-        session = to_supabase_session_pooler_url(normalized)
-        if session not in ordered:
-            ordered.append(session)
-        # Direct db.<ref>.supabase.co is often IPv6-only — Render free tier needs pooler (IPv4).
-        if not on_render:
-            derived = try_derive_supabase_direct_url(session) or try_derive_supabase_direct_url(normalized)
-            if derived:
-                ordered.append(normalize_database_url(derived))
+    if direct_env:
+        direct = normalize_runtime_database_url(direct_env)
+        if direct not in ordered:
+            ordered.append(direct)
     seen: set[str] = set()
     out: list[str] = []
     for u in ordered:
@@ -166,14 +156,6 @@ def supabase_bootstrap_url_candidates(runtime_url: str) -> list[str]:
             seen.add(u)
             out.append(u)
     return out
-
-
-def supabase_runtime_url_after_bootstrap(bootstrap_url: str, original_url: str) -> str:
-    """On Render keep session pooler for runtime (IPv4); elsewhere use working bootstrap URL."""
-    on_render = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
-    if on_render and is_supabase_url(original_url):
-        return to_supabase_session_pooler_url(normalize_database_url(original_url))
-    return bootstrap_url
 
 
 class Settings:
@@ -193,8 +175,10 @@ class Settings:
         _rel = _raw_database_url.removeprefix("sqlite:///./")
         DATABASE_URL: str = f"sqlite:///{(_backend_dir / _rel).resolve().as_posix()}"
     else:
-        DATABASE_URL: str = normalize_database_url(_raw_database_url)
-    _bootstrap_raw: str = resolve_database_bootstrap_url(_raw_database_url if not _raw_database_url.startswith("sqlite") else DATABASE_URL)
+        DATABASE_URL: str = normalize_runtime_database_url(_raw_database_url)
+    _bootstrap_raw: str = resolve_database_bootstrap_url(
+        _raw_database_url if not _raw_database_url.startswith("sqlite") else DATABASE_URL
+    )
     DATABASE_BOOTSTRAP_URL: str = (
         DATABASE_URL if _raw_database_url.startswith("sqlite") else _bootstrap_raw
     )

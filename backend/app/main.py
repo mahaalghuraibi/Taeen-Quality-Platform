@@ -14,7 +14,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 import app.models  # noqa: F401 - register ORM mappers before routes import User
 from app.api.router import api_router
-from app.core.config import sanitize_database_url_for_log, settings
+from app.core.config import database_host_from_url, sanitize_database_url_for_log, settings
 from app.core.limiter import limiter
 from app.db.session import init_db_with_retry
 from app.middleware.security_headers import SecurityHeadersMiddleware
@@ -97,8 +97,10 @@ async def lifespan(_app: FastAPI):
         logger.warning(yolo_warning.strip())
 
     _app.state.db_ready = False
-    _app.state.db_target = sanitize_database_url_for_log(settings.DATABASE_URL)
-    _app.state.db_bootstrap_target = sanitize_database_url_for_log(settings.DATABASE_BOOTSTRAP_URL)
+    _app.state.runtime_host = database_host_from_url(settings.DATABASE_URL)
+    _app.state.bootstrap_host = database_host_from_url(settings.DATABASE_BOOTSTRAP_URL)
+    print(f"DATABASE_URL = {sanitize_database_url_for_log(settings.DATABASE_URL)}", flush=True)
+    print(f"BOOTSTRAP_URL = {sanitize_database_url_for_log(settings.DATABASE_BOOTSTRAP_URL)}", flush=True)
     _app.state.db_last_error = None
     try:
         init_db_with_retry()
@@ -223,10 +225,11 @@ def health(request: Request) -> dict[str, str | bool]:
     payload: dict[str, str | bool] = {
         "status": "ok",
         "db": bool(getattr(request.app.state, "db_ready", False)),
+        "runtime_host": str(getattr(request.app.state, "runtime_host", database_host_from_url(settings.DATABASE_URL))),
+        "bootstrap_host": str(
+            getattr(request.app.state, "bootstrap_host", database_host_from_url(settings.DATABASE_BOOTSTRAP_URL))
+        ),
     }
-    db_target = getattr(request.app.state, "db_target", None)
-    if db_target:
-        payload["db_target"] = str(db_target)
     if not payload["db"]:
         err = getattr(request.app.state, "db_last_error", None)
         if err:

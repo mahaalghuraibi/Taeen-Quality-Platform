@@ -7,11 +7,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from app.core.config import (
+    database_host_from_url,
     is_supabase_url,
     sanitize_database_url_for_log,
     settings,
     supabase_bootstrap_url_candidates,
-    supabase_runtime_url_after_bootstrap,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,14 @@ def _engine_kwargs(*, sslmode: str = "require", url: str | None = None) -> dict:
 
 def _rebuild_engine(*, sslmode: str = "require", url: str | None = None) -> None:
     global engine, SessionLocal
-    db_url = url or settings.DATABASE_URL
+    # Runtime engine MUST always use settings.DATABASE_URL — never bootstrap/direct host.
+    db_url = settings.DATABASE_URL if url is None else url
+    if url is not None and url != settings.DATABASE_URL:
+        logger.warning(
+            "Ignoring non-runtime DB URL for engine rebuild; using DATABASE_URL host=%s",
+            database_host_from_url(settings.DATABASE_URL),
+        )
+        db_url = settings.DATABASE_URL
     try:
         engine.dispose()
     except Exception:
@@ -94,7 +101,12 @@ def _bootstrap_session() -> Session:
 
 
 _rebuild_engine(sslmode="require")
-logger.info("Runtime DB target: %s", sanitize_database_url_for_log(settings.DATABASE_URL))
+_runtime_log = sanitize_database_url_for_log(settings.DATABASE_URL)
+_bootstrap_log = sanitize_database_url_for_log(settings.DATABASE_BOOTSTRAP_URL)
+print(f"DATABASE_URL = {_runtime_log}", flush=True)
+print(f"BOOTSTRAP_URL = {_bootstrap_log}", flush=True)
+logger.info("Runtime DB target: %s", _runtime_log)
+logger.info("Bootstrap DB target: %s", _bootstrap_log)
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -170,7 +182,7 @@ def init_db() -> None:
 
 
 def init_db_with_retry(*, max_attempts: int = 4, delay_sec: float = 2.0) -> None:
-    """Retry DB bootstrap — try Supabase session pooler then direct connection."""
+    """Retry schema bootstrap on bootstrap URL(s); runtime engine always stays on DATABASE_URL."""
     ssl_modes = ["require", "prefer"]
     bootstrap_urls = supabase_bootstrap_url_candidates(settings.DATABASE_URL)
     last_exc: Exception | None = None
@@ -178,28 +190,28 @@ def init_db_with_retry(*, max_attempts: int = 4, delay_sec: float = 2.0) -> None
     for bootstrap_url in bootstrap_urls:
         for sslmode in ssl_modes:
             attempt += 1
-            if attempt > 1:
-                global _bootstrap_engine, _bootstrap_session_factory
-                _bootstrap_engine = None
-                _bootstrap_session_factory = None
-                _rebuild_engine(sslmode=sslmode)
+            global _bootstrap_engine, _bootstrap_session_factory
+            _bootstrap_engine = None
+            _bootstrap_session_factory = None
             try:
                 _get_bootstrap_engine(bootstrap_url)
                 init_db()
+                # Verify connectivity on the RUNTIME pooler engine — never bootstrap/direct.
+                _rebuild_engine(sslmode=sslmode)
                 verify_database_connection()
                 logger.info(
-                    "init_db succeeded (bootstrap=%s sslmode=%s)",
+                    "init_db succeeded (bootstrap=%s runtime=%s sslmode=%s)",
                     sanitize_database_url_for_log(bootstrap_url),
+                    sanitize_database_url_for_log(settings.DATABASE_URL),
                     sslmode,
                 )
-                runtime_url = supabase_runtime_url_after_bootstrap(bootstrap_url, settings.DATABASE_URL)
-                _rebuild_engine(sslmode=sslmode, url=runtime_url)
                 return
             except Exception as exc:
                 last_exc = exc
                 logger.error(
-                    "init_db failed (bootstrap=%s sslmode=%s): %s: %s",
+                    "init_db failed (bootstrap=%s runtime=%s sslmode=%s): %s: %s",
                     sanitize_database_url_for_log(bootstrap_url),
+                    sanitize_database_url_for_log(settings.DATABASE_URL),
                     sslmode,
                     type(exc).__name__,
                     exc,
