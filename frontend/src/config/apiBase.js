@@ -119,7 +119,11 @@ function devApiBaseDefault() {
 function resolveApiBase() {
   const fromEnv = normalizeBase(import.meta.env.VITE_API_BASE_URL);
   if (import.meta.env.PROD) {
-    return fromEnv || inferProductionApiBase() || PRODUCTION_API_ORIGIN;
+    // Validate the baked-in URL: if it is not the canonical production host
+    // (e.g. a stale Render service name from before a rename), discard it and
+    // fall through to the always-correct PRODUCTION_API_ORIGIN fallback.
+    const validFromEnv = fromEnv && isCanonicalProductionApiBase(fromEnv) ? fromEnv : "";
+    return validFromEnv || inferProductionApiBase() || PRODUCTION_API_ORIGIN;
   }
   return (
     fromEnv ||

@@ -94,11 +94,16 @@ export default function LoginPage() {
     setLoading(true);
     setStatusText("جاري الاتصال بالخادم…");
     const loginUrl = apiUrl("/api/v1/auth/login");
+    // Show a "server is waking" hint if the probe takes more than 8 s (Render cold start).
+    const wakeHintTimer = setTimeout(() => {
+      setStatusText("الخادم يستيقظ، انتظر دقيقة…");
+    }, 8000);
     try {
       const apiUp = await wakeApiBeforeAuth({
-        maxAttempts: import.meta.env.PROD ? 2 : 1,
-        timeoutMs: import.meta.env.PROD ? 25_000 : 15_000,
+        maxAttempts: import.meta.env.PROD ? 3 : 1,
+        timeoutMs: import.meta.env.PROD ? 28_000 : 15_000,
       });
+      clearTimeout(wakeHintTimer);
       if (!apiUp) {
         setError(AUTH_ERROR_SERVER_UNAVAILABLE);
         return;
@@ -199,6 +204,7 @@ export default function LoginPage() {
       console.error("[Login] request failed:", loginUrl, err);
       setError(formatAuthFetchError(err, "تعذر تسجيل الدخول."));
     } finally {
+      clearTimeout(wakeHintTimer);
       inFlightRef.current = false;
       setLoading(false);
       setStatusText("");

@@ -90,7 +90,12 @@ export async function probeApiHealth(options = {}) {
             { method: "GET", headers: { Accept: "application/json" } },
             timeoutMs,
           );
-          const bodyText = await res.text().catch(() => "");
+          // Body read has its own 8-second cap so a server that sends headers
+          // but never finishes the body cannot cause an indefinite hang.
+          const bodyText = await Promise.race([
+            res.text(),
+            new Promise((resolve) => setTimeout(() => resolve(""), 8000)),
+          ]).catch(() => "");
           if (res.status === 200 && isFastApiHealthBody(bodyText)) {
             setRuntimeApiBase(origin);
             markApiAlive();
