@@ -133,8 +133,8 @@ export default function RegisterPage() {
     setBranchesLoading(true);
     try {
       await wakeApiBeforeAuth({
-        maxAttempts: import.meta.env.PROD ? 2 : 1,
-        timeoutMs: import.meta.env.PROD ? 25_000 : 15_000,
+        maxAttempts: import.meta.env.PROD ? 8 : 1,
+        timeoutMs: import.meta.env.PROD ? 45_000 : 15_000,
       });
       const res = await fetchWithTimeout(
         apiUrl("/api/v1/branches/public"),
@@ -200,8 +200,8 @@ export default function RegisterPage() {
     const registerUrl = apiUrl("/api/v1/auth/users");
     try {
       const apiUp = await wakeApiBeforeAuth({
-        maxAttempts: import.meta.env.PROD ? 2 : 1,
-        timeoutMs: import.meta.env.PROD ? 25_000 : 15_000,
+        maxAttempts: import.meta.env.PROD ? 8 : 1,
+        timeoutMs: import.meta.env.PROD ? 45_000 : 15_000,
       });
       if (!apiUp) {
         setError(AUTH_ERROR_SERVER_UNAVAILABLE);

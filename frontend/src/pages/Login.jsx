@@ -94,14 +94,15 @@ export default function LoginPage() {
     setLoading(true);
     setStatusText("جاري الاتصال بالخادم…");
     const loginUrl = apiUrl("/api/v1/auth/login");
-    // Show a "server is waking" hint if the probe takes more than 8 s (Render cold start).
+    // Show a "server is waking" hint after 5 s — Render cold starts return 502 instantly
+    // so the first retry sleep (12 s) starts immediately; 5 s gives early feedback.
     const wakeHintTimer = setTimeout(() => {
       setStatusText("الخادم يستيقظ، انتظر دقيقة…");
-    }, 8000);
+    }, 5000);
     try {
       const apiUp = await wakeApiBeforeAuth({
-        maxAttempts: import.meta.env.PROD ? 3 : 1,
-        timeoutMs: import.meta.env.PROD ? 28_000 : 15_000,
+        maxAttempts: import.meta.env.PROD ? 8 : 1,
+        timeoutMs: import.meta.env.PROD ? 45_000 : 15_000,
       });
       clearTimeout(wakeHintTimer);
       if (!apiUp) {

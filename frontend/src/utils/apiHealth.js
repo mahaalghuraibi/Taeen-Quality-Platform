@@ -9,6 +9,19 @@ import { fetchWithTimeout } from "./fetchWithTimeout.js";
 let _lastAliveMs = 0;
 const ALIVE_FRESH_MS = 5 * 60_000;
 
+/**
+ * Sleep between consecutive 502/503/504 probes while Render is cold-starting.
+ * 12 s in prod so 8 attempts × 12 s ≈ 96 s — enough to survive a full cold start.
+ */
+const WAKING_RETRY_SLEEP_MS = import.meta.env.PROD ? 12_000 : 4_000;
+
+/**
+ * Hard cap on timeout retries regardless of maxAttempts.
+ * Each timeout burns the full per-fetch timeout (45 s), so cap at 3 to
+ * avoid an 8 × 45 s = 6-minute wait when the server is truly unreachable.
+ */
+const MAX_TIMEOUT_RETRIES = 3;
+
 export function markApiAlive() {
   _lastAliveMs = Date.now();
 }
@@ -76,7 +89,7 @@ function sleep(ms) {
  * @returns {Promise<{ status: string, reachable: boolean, httpStatus?: number }>}
  */
 export async function probeApiHealth(options = {}) {
-  const maxAttempts = options.maxAttempts ?? (import.meta.env.PROD ? 3 : 2);
+  const maxAttempts = options.maxAttempts ?? (import.meta.env.PROD ? 8 : 2);
   const timeoutMs = options.timeoutMs ?? (import.meta.env.PROD ? 45_000 : 20_000);
   const origins = originsToProbe();
 
@@ -103,7 +116,7 @@ export async function probeApiHealth(options = {}) {
           }
           if (isRenderWakingHttp(res.status)) {
             if (attempt < maxAttempts) {
-              await sleep(4000);
+              await sleep(WAKING_RETRY_SLEEP_MS);
               break;
             }
             return { status: API_STATUS.WAKING, reachable: false, httpStatus: res.status, origin };
@@ -111,8 +124,12 @@ export async function probeApiHealth(options = {}) {
         } catch (err) {
           const isTimeout = err?.code === "TIMEOUT";
           const isNetwork = err instanceof TypeError;
-          if (attempt < maxAttempts && isTimeout) {
+          if (attempt < Math.min(maxAttempts, MAX_TIMEOUT_RETRIES) && isTimeout) {
             await sleep(3000);
+            break;
+          }
+          if (attempt < Math.min(maxAttempts, MAX_TIMEOUT_RETRIES) && isNetwork) {
+            await sleep(2000);
             break;
           }
           if (isTimeout && origin === origins[origins.length - 1] && attempt === maxAttempts) {

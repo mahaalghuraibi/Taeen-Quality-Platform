@@ -8,7 +8,7 @@ export { markApiAlive } from "./apiHealth.js";
  * with a long timeout so the dashboard does not show "offline" during wake-up.
  */
 const WAKE_TIMEOUT_MS = import.meta.env.PROD ? 45_000 : 25_000;
-const WAKE_ATTEMPTS = import.meta.env.PROD ? 3 : 1;
+const WAKE_ATTEMPTS = import.meta.env.PROD ? 8 : 1;
 
 let _inFlightWake = null;
 
