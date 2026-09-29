@@ -60,7 +60,10 @@ export function formatAuthFetchError(err, fallback = AUTH_ERROR_SERVER_UNAVAILAB
  */
 export function formatAuthError(status, body, fallback = "تعذر إكمال الطلب.") {
   if (status === 401) return AUTH_ERROR_INVALID_CREDENTIALS;
-  if (status === 502 || status === 503 || status === 504) return AUTH_ERROR_SERVER_UNAVAILABLE;
+  // 502/503/504 check is intentionally moved BELOW detail parsing.
+  // FastAPI can return 503 with a meaningful Arabic detail (e.g. "قاعدة البيانات
+  // غير متاحة" when Supabase is paused). Checking status first would discard
+  // that message and show the generic "server unavailable" string instead.
 
   const fromDetail = parseFastApiDetail(body?.detail);
   if (fromDetail) {
@@ -82,11 +85,16 @@ export function formatAuthError(status, body, fallback = "تعذر إكمال ا
     if (fromDetail === "حدث خطأ أثناء معالجة الطلب" || fromDetail === "حدث خطأ داخلي") {
       return AUTH_ERROR_DATABASE_UNAVAILABLE;
     }
+    if (fromDetail.includes("قاعدة البيانات") || fromDetail.includes("قاعدة")) {
+      return AUTH_ERROR_DATABASE_UNAVAILABLE;
+    }
     return fromDetail;
   }
   if (typeof body?.message === "string" && body.message.trim()) {
     return body.message.trim();
   }
+  // No parseable detail: gateway/waking errors without a body → generic message.
+  if (status === 502 || status === 503 || status === 504) return AUTH_ERROR_SERVER_UNAVAILABLE;
   if (status === 422) {
     return "البيانات المرسلة غير صالحة. راجع الحقول وحاول مرة أخرى.";
   }
