@@ -1,32 +1,30 @@
-# Screenshots · لقطات الشاشة
 
-📸 **This folder is for real portfolio screenshots only.**  
-Do **not** commit placeholder or fake images — add captures from a running demo when ready.
+## Screenshots | لقطات الشاشة
 
----
+A visual overview of Ayn Al-Jawdah, showcasing the platform's interface and AI-powered capabilities.
 
-## Checklist | قائمة مقترحة
+### 1. Platform Homepage | الواجهة الرئيسية
 
-Add PNG or WebP files here (or in dated subfolders) and link them from the root **`README.md`** when you publish.
+The main landing page of Ayn Al-Jawdah, featuring a modern Arabic RTL interface designed for smart kitchen quality monitoring.
 
-| Suggested file name | What to capture |
-|---------------------|-----------------|
-| `dashboard-staff.png` | Staff dish dashboard (capture / records). |
-| `analytics.png` | Supervisor analytics overview / charts. |
-| `reports.png` | Reports section / export context. |
-| `alerts.png` | Monitoring alerts list or detail. |
-| `cameras.png` | Camera monitoring / zone cards. |
-| `dish-reviews.png` | Dish review workflow (supervisor). |
-| `login-or-home.png` | Login page **or** landing home hero. |
+![Ayn Al-Jawdah Homepage](./screenshots/home.png)
 
 ---
 
-## Tips | نصائح
+### 2. AI-Powered Dish Recognition | التعرف الذكي على الأطباق
 
-- Use consistent viewport width (e.g. 1440px) for a clean portfolio row.  
-- Mask real names, emails, and RTSP URLs if screenshots are public.  
-- After adding images, update the **Screenshots** section in **`../README.md`** with markdown image links, e.g. `![Analytics](./screenshots/analytics.png)`.
+AI-assisted dish recognition that analyzes captured images, suggests dish names, and displays prediction confidence scores.
+
+![AI Dish Recognition](./screenshots/ai-detection.png)
 
 ---
 
-*No fake screenshots — real captures only.*
+### 3. AI Video Analysis & Violation Detection | تحليل الفيديو ورصد المخالفات
+
+Computer vision-powered video analysis for identifying potential kitchen safety and hygiene violations, displaying detected events and confidence scores.
+
+![AI Violation Detection](./screenshots/violation-detection.png)
+
+---
+
+*Screenshots captured directly from Ayn Al-Jawdah Quality Platform.*
