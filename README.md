@@ -1,132 +1,155 @@
-# منصة عين الجودة · Ayn Al-Jawdah Quality Platform
+# منصة عين الجودة | Ayn Al-Jawdah Quality Platform 👁️
 
-**AI-powered smart kitchen monitoring and quality analytics platform.**
+**AI-powered platform for smart kitchen quality monitoring.**
 
-Unified web app for **staff**, **supervisors**, and **admins**: dish documentation, AI-assisted recognition, reviews, monitoring alerts, and analytics — with **RTL Arabic** UI and **JWT** authentication.
+عين الجودة هي منصة ويب طورتها لمساعدة فرق المطابخ على متابعة الجودة والسلامة، وتوثيق الأطباق، وتحليل الصور والفيديو باستخدام تقنيات الذكاء الاصطناعي والرؤية الحاسوبية.
 
----
-
-## 📌 GitHub About (لمحة للملف الشخصي)
-
-| Field | Suggested value |
-|--------|-----------------|
-| **Description** | AI-powered smart kitchen monitoring and analytics platform built with FastAPI, React, and AI-based violation detection. |
-| **Topics** | `fastapi` `react` `ai` `computer-vision` `analytics` `dashboard` `kitchen` `monitoring` `jwt` `postgresql` `vite` `arabic` `rtl` |
+The platform combines kitchen monitoring, dish documentation, AI-assisted recognition, alerts, and analytics in one Arabic RTL interface.
 
 ---
 
-## Project overview | نظرة عامة
+## About the project | عن المشروع
 
-The platform helps kitchens document dishes, run quality checks, and monitor hygiene/PPE-style violations using computer vision where configured. Roles isolate data (staff vs branch supervisor vs admin) while sharing one codebase.
+The idea behind Ayn Al-Jawdah is to make kitchen quality monitoring easier through one platform that combines daily operations with AI-assisted analysis.
 
-**English:** Operational dashboards, reporting stubs, camera-aware monitoring flows, and dish review pipelines live behind the same FastAPI API and React SPA.
+The system supports three main roles:
+
+- **Staff** — document dishes and manage daily records.
+- **Supervisor** — review dishes, monitor results, and follow analytics.
+- **Admin** — manage users and platform settings.
+
+The platform also includes AI-based image and video analysis to support dish recognition and detect selected kitchen safety and hygiene violations.
 
 ---
 
 ## Main features | الميزات الرئيسية
 
-| Area | Highlights |
-|------|------------|
-| **Roles** | Staff · Supervisor · Admin |
-| **Dishes** | Capture, AI suggest, save records, search/filter |
-| **Reviews** | Supervisor/admin approve, reject, or edit pending dishes |
-| **Monitoring** | Frame/video analysis hooks, alerts, camera registry |
-| **Analytics** | Supervisor dashboards and charts (Recharts) |
-| **Reports** | Export/report helpers in UI; API reporting endpoints |
-| **Auth** | JWT access tokens, protected routes (UI + server enforcement) |
-| **UX** | RTL Arabic, responsive layout |
+- 👥 Staff, Supervisor, and Admin roles
+- 🍽️ Dish capture and documentation
+- 🤖 AI-assisted dish recognition
+- 🎥 Video analysis and violation detection
+- 🔔 Monitoring alerts
+- 📊 Analytics and dashboards
+- 🔎 Search and filtering
+- ✅ Dish review and approval workflow
+- 🔐 JWT authentication and protected routes
+- 🌐 Responsive Arabic RTL interface
 
 ---
 
-## Tech stack
+## Tech stack | التقنيات المستخدمة
 
-| Layer | Technology |
-|-------|------------|
-| **Frontend** | React 19, Vite 6, React Router 7, Tailwind CSS, Zustand, Recharts |
-| **Backend** | FastAPI, Starlette, SQLAlchemy 2, Pydantic v2, Uvicorn |
-| **Auth** | JWT (HS256), OAuth2 password flow for login |
-| **Database** | SQLite by default for local dev; **PostgreSQL** recommended for production |
-| **AI / CV** | Optional **YOLO** weights, **Gemini** vision APIs, OpenCV-style flows via services (see `backend/app/services/`) |
+| Area | Technologies |
+|------|--------------|
+| **Frontend** | React.js, Vite, Tailwind CSS, React Router, Zustand, Recharts |
+| **Backend** | Python, FastAPI, SQLAlchemy, Pydantic |
+| **Database** | PostgreSQL / Supabase, SQLite for local development |
+| **AI & Computer Vision** | YOLO, Gemini Vision, OpenCV, PyTorch |
+| **Authentication** | JWT |
+| **Deployment** | Render, Docker |
 
 ---
 
-## Architecture overview
+## How it works | كيف تعمل المنصة
 
-High-level data flow:
-
-```
-┌─────────────────────┐
-│  React + Vite SPA   │  RTL Arabic UI, JWT in requests
-└──────────┬──────────┘
-           │ HTTPS / REST
-           ▼
-┌─────────────────────┐
-│   FastAPI Backend   │  RBAC, rate limits, security headers
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│ PostgreSQL (prod)   │  SQLite OK for local demo
-│ or SQLite (dev)     │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│ AI services         │  YOLO · Gemini vision · monitoring pipeline
-└─────────────────────┘
+```text
+React + Vite Frontend
+        │
+        │ REST API
+        ▼
+FastAPI Backend
+        │
+        ├── Authentication & Roles
+        ├── Dish Management
+        ├── Monitoring & Alerts
+        └── Analytics
+        │
+        ▼
+PostgreSQL / Supabase
+        │
+        ▼
+AI Services
+YOLO · Gemini Vision · OpenCV
 ```
 
 ---
 
 ## Screenshots | لقطات الشاشة
 
-Add real screenshots under [`screenshots/`](screenshots/README.md) for portfolio polish.  
-See **`screenshots/README.md`** for the checklist (dashboard, analytics, reports, alerts, cameras, dish review, login/home).
+### 1. Platform Homepage | الواجهة الرئيسية
+
+The main landing page of Ayn Al-Jawdah with an Arabic RTL interface designed for smart kitchen quality monitoring.
+
+![Ayn Al-Jawdah Homepage](./screenshots/IMG_7769.jpeg)
 
 ---
 
-## Installation | التثبيت
+### 2. AI-Powered Dish Recognition | التعرف الذكي على الأطباق
 
-### Prerequisites
+The platform can analyze captured dish images, suggest the detected dish, and display a confidence score.
 
-- **Node.js** 18+ · **npm** 9+
-- **Python** 3.11+
-- **Git**
+![AI-Powered Dish Recognition](./screenshots/IMG_7771.jpeg)
 
-### Backend setup
+---
+
+### 3. Video Analysis & Violation Detection | تحليل الفيديو ورصد المخالفات
+
+Video analysis is used to identify selected kitchen safety and hygiene violations and display detected events with confidence scores.
+
+![Video Analysis and Violation Detection](./screenshots/IMG_7767.jpeg)
+
+> **Note:** The screenshots above are captured directly from the working application. AI results depend on the configured models and input data.
+
+---
+
+## My work on the project | دوري في المشروع
+
+I worked on developing and connecting the main parts of the platform, including:
+
+- Building the frontend interface using React.
+- Developing backend APIs with FastAPI.
+- Connecting the application to the database.
+- Implementing authentication and role-based access.
+- Integrating AI services for image and video analysis.
+- Working with YOLO and Gemini for computer vision features.
+- Building dashboards, monitoring flows, and alerts.
+- Testing and improving the overall user experience.
+
+---
+
+## Installation | تشغيل المشروع
+
+### Requirements
+
+- Node.js 18+
+- npm 9+
+- Python 3.11+
+- Git
+
+### Backend
 
 ```bash
 cd backend
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env        # ثم عبّئ القيم محلياً
+cp .env.example .env
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-API base (local): `http://127.0.0.1:8000` · OpenAPI UI: `/docs` when **not** in `ENVIRONMENT=production`.
-
-### Render deployment | نشر Render
-
-Root directory on Render: **`backend/`**.
-
-**Start command:**
+For Windows:
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port=$PORT
+.venv\Scripts\activate
 ```
 
-**Pre-deploy command** (creates or updates admin from **`SEED_ADMIN_EMAIL`** / **`SEED_ADMIN_PASSWORD`**):
+The local API runs on:
 
-```bash
-python scripts/create_admin.py
+```text
+http://127.0.0.1:8000
 ```
 
-Blueprint example: [`render.yaml`](render.yaml) (`preDeployCommand` + `startCommand` as above). Customize the service name, `envVars`, and attach your PostgreSQL database in the Render dashboard.
-
-> **Account migration note:** User accounts from the old Render Postgres database were **not** migrated to Supabase automatically. After switching to Supabase, staff and supervisors must **create new accounts** via signup (or an admin must recreate them) unless you run a dedicated migration script.
-
-### Frontend setup
+### Frontend
 
 ```bash
 cd frontend
@@ -134,32 +157,69 @@ npm install
 npm run dev
 ```
 
-App (local): `http://localhost:5173` — Vite proxies `/api` to the backend when configured in `vite.config.js`.
+The frontend runs locally on:
 
-### Docker setup | دوكر
-
-Production-ready Dockerfiles are provided under **`backend/Dockerfile`** (FastAPI + ML deps) and **`frontend/Dockerfile`** (multi-stage Vite build → `serve` SPA host). Extend with PostgreSQL service and TLS termination (nginx/Caddy) when needed.
-
----
-
-## Security summary | الأمان
-
-📄 **Authoritative technical baseline:** [`SECURITY_REPORT.md`](SECURITY_REPORT.md)
-
-**High-security baseline completed for demo and controlled production deployment.**  
-This does **not** mean 100% security — use HTTPS, hardened hosting, secrets management, backups, and periodic testing.
-
-Additional deployment-oriented notes: [`docs/SECURITY_DEPLOYMENT_NOTES.md`](docs/SECURITY_DEPLOYMENT_NOTES.md).
+```text
+http://localhost:5173
+```
 
 ---
 
-## Future enhancements | تطوير لاحق
+## Deployment | النشر
 
-- Push / email notifications for critical alerts  
-- Richer analytics and scheduled reports  
-- Stronger multi-tenant isolation and audit logs  
-- Encrypted storage for camera credentials at rest  
-- Redis-backed rate limiting for multi-worker APIs  
+The project includes configuration for deployment using Render and Docker.
+
+### Render
+
+Backend start command:
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port=$PORT
+```
+
+The repository also includes:
+
+```text
+render.yaml
+backend/Dockerfile
+frontend/Dockerfile
+```
+
+Environment variables and API keys should be configured securely in the deployment environment and should not be committed to the repository.
+
+---
+
+## Security | الأمان
+
+The project includes basic security practices such as:
+
+- JWT authentication
+- Role-based access control
+- Protected API routes
+- Environment variables for sensitive configuration
+- CORS configuration
+- Server-side authorization checks
+
+More details are available in:
+
+[`SECURITY_REPORT.md`](SECURITY_REPORT.md)
+
+and
+
+[`docs/SECURITY_DEPLOYMENT_NOTES.md`](docs/SECURITY_DEPLOYMENT_NOTES.md)
+
+---
+
+## Future improvements | تطوير لاحق
+
+Some improvements I plan to explore in future versions:
+
+- Email or push notifications for important alerts
+- More detailed analytics and reports
+- Additional AI detection scenarios
+- Improved camera monitoring
+- Better performance and security
+- Expanded AI model evaluation and testing
 
 ---
 
@@ -167,50 +227,46 @@ Additional deployment-oriented notes: [`docs/SECURITY_DEPLOYMENT_NOTES.md`](docs
 
 ```text
 ska-system/
-├── frontend/           # React + Vite SPA
-├── backend/            # FastAPI app (app/) + ML weights (ml/models/)
-├── dataset/            # Training dataset layout (raw images excluded by .gitignore)
-├── docs/               # Deployment & security notes
-├── scripts/            # PPE training / dataset utilities
-├── screenshots/        # Portfolio images (optional)
-├── render.yaml         # Render Blueprint (backend + static frontend)
+├── frontend/           # React frontend
+├── backend/            # FastAPI backend
+├── dataset/            # AI training data structure
+├── docs/               # Project documentation
+├── scripts/            # Training and utility scripts
+├── screenshots/        # Real application screenshots
+├── render.yaml         # Render configuration
 ├── SECURITY_REPORT.md
-└── README.md           # هذا الملف
+└── README.md
 ```
 
 ---
 
-## Documentation map | خريطة الوثائق
+## Documentation | الوثائق
 
-### 📘 الوثائق العربية للتسليم التجاري (Arabic delivery docs)
+Additional project documentation is available in the `docs/` folder.
 
-| Document | الغرض |
-|----------|-------|
-| [`docs/CLIENT_GUIDE_AR.md`](docs/CLIENT_GUIDE_AR.md) | **دليل العميل** — مالك / مشرف / موظف المطعم |
-| [`docs/ADMIN_GUIDE_AR.md`](docs/ADMIN_GUIDE_AR.md) | **دليل مدير النظام** — إدارة وظيفية وإدارية |
-| [`docs/TECHNICAL_REQUIREMENTS_AR.md`](docs/TECHNICAL_REQUIREMENTS_AR.md) | **المتطلبات التقنية** — البنية، API، النماذج، DB |
-| [`docs/DEPLOYMENT_GUIDE_AR.md`](docs/DEPLOYMENT_GUIDE_AR.md) | **دليل النشر** — Render، Docker، Backup، Rollback |
-| [`docs/SECURITY_GUIDE_AR.md`](docs/SECURITY_GUIDE_AR.md) | **دليل الأمان** — JWT، CORS، الاستجابة للحوادث |
+### Arabic documentation
 
-### Engineering reference
+- [`CLIENT_GUIDE_AR.md`](docs/CLIENT_GUIDE_AR.md) — دليل استخدام المنصة
+- [`ADMIN_GUIDE_AR.md`](docs/ADMIN_GUIDE_AR.md) — دليل مدير النظام
+- [`TECHNICAL_REQUIREMENTS_AR.md`](docs/TECHNICAL_REQUIREMENTS_AR.md) — المتطلبات التقنية
+- [`DEPLOYMENT_GUIDE_AR.md`](docs/DEPLOYMENT_GUIDE_AR.md) — دليل النشر
+- [`SECURITY_GUIDE_AR.md`](docs/SECURITY_GUIDE_AR.md) — دليل الأمان
 
-| Document | Purpose |
-|----------|---------|
-| [`frontend/README.md`](frontend/README.md) | Frontend setup, scripts, troubleshooting |
-| [`backend/README.md`](backend/README.md) | API modules, env vars, production notes |
-| [`SECURITY_REPORT.md`](SECURITY_REPORT.md) | Security baseline & checklist |
-| [`docs/PROJECT_HANDOVER.md`](docs/PROJECT_HANDOVER.md) | Handover context for new engineers |
-| [`docs/CURRENT_STATUS.md`](docs/CURRENT_STATUS.md) | Snapshot of feature status |
-| [`docs/NEXT_STEPS.md`](docs/NEXT_STEPS.md) | Recommended follow-up work |
-| [`docs/SECURITY_DEPLOYMENT_NOTES.md`](docs/SECURITY_DEPLOYMENT_NOTES.md) | Production deployment hardening notes |
-| [`docs/PRODUCTION_ACCURACY_REPORT.md`](docs/PRODUCTION_ACCURACY_REPORT.md) | AI accuracy validation report |
+### Technical documentation
+
+- [`frontend/README.md`](frontend/README.md)
+- [`backend/README.md`](backend/README.md)
+- [`docs/PROJECT_HANDOVER.md`](docs/PROJECT_HANDOVER.md)
+- [`docs/CURRENT_STATUS.md`](docs/CURRENT_STATUS.md)
+- [`docs/NEXT_STEPS.md`](docs/NEXT_STEPS.md)
+- [`docs/PRODUCTION_ACCURACY_REPORT.md`](docs/PRODUCTION_ACCURACY_REPORT.md)
 
 ---
 
-## License & credits
+## External services
 
-Use and attribution per your organization’s policy. External APIs (Gemini, Roboflow, etc.) require their own keys and terms.
+Some AI features depend on external services such as Gemini and other configured APIs. API keys are not included in the repository and must be provided separately through environment variables.
 
 ---
 
-*منصة عين الجودة — Ayn Al-Jawdah Quality Platform*
+**Ayn Al-Jawdah Quality Platform | منصة عين الجودة 👁️**
