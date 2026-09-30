@@ -7,7 +7,7 @@ A visual overview of Ayn Al-Jawdah, showcasing the platform's interface and AI-p
 
 The main landing page of Ayn Al-Jawdah, featuring a modern Arabic RTL interface designed for smart kitchen quality monitoring.
 
-![Ayn Al-Jawdah Homepage](./screenshots/home.png)
+![Ayn Al-Jawdah Homepage]![Platform Homepage](./IMG_7769.jpeg)
 
 ---
 
