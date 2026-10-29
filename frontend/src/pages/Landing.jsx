@@ -643,7 +643,7 @@ export default function LandingPage() {
               </div>
             </div>
             <p className="text-center text-[13px] text-slate-500" data-aos="fade-in">
-              © 2026 عين الجودة<br />© icareway
+              2026 عين الجودة<br />© icareway
             </p>
           </div>
         </footer>
