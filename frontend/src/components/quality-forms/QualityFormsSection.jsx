@@ -33,6 +33,7 @@ export default function QualityFormsSection({ sectionRef, sectionClassName, getA
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modalStage, setModalStage] = useState(null);
+  const [viewStage, setViewStage] = useState(null);
 
   useEffect(() => {
     const token = getAccessToken?.();
@@ -64,14 +65,14 @@ export default function QualityFormsSection({ sectionRef, sectionClassName, getA
     if (result.ok) setSession(result.data);
   }, [getAccessToken]);
 
-  async function handleStageSubmit({ notes }) {
+  async function handleStageSubmit({ answers, notes }) {
     const token = getAccessToken?.();
     if (!token || !session || !modalStage) return { ok: false, error: "خطأ في المصادقة" };
     const result = await submitStage({
       token,
       sessionId: session.id,
       stageNumber: modalStage.stage_number,
-      answers: {},
+      answers: answers ?? {},
       notes,
     });
     if (result.ok) {
@@ -85,7 +86,13 @@ export default function QualityFormsSection({ sectionRef, sectionClassName, getA
 
   function handleStageClick(stageNumber) {
     const def = stageDefinitions.find((d) => d.stage_number === stageNumber);
-    if (def) setModalStage(def);
+    if (!def) return;
+    const submittedStage = session?.stages?.find((s) => s.stage_number === stageNumber);
+    if (submittedStage) {
+      setViewStage({ def, submitted: submittedStage });
+    } else {
+      setModalStage(def);
+    }
   }
 
   return (
@@ -177,10 +184,6 @@ export default function QualityFormsSection({ sectionRef, sectionClassName, getA
           />
         )}
 
-        {/* Placeholder notice at bottom */}
-        <p className="mt-4 text-xs text-slate-600">
-          ملاحظة: أسئلة المراحل ستُضاف بعد اعتماد النموذج الرسمي (الإصدار الثالث).
-        </p>
       </section>
 
       {modalStage && (
@@ -188,6 +191,15 @@ export default function QualityFormsSection({ sectionRef, sectionClassName, getA
           stage={modalStage}
           onClose={() => setModalStage(null)}
           onSubmit={handleStageSubmit}
+        />
+      )}
+
+      {viewStage && (
+        <StageFormModal
+          stage={viewStage.def}
+          submittedData={viewStage.submitted}
+          readOnly
+          onClose={() => setViewStage(null)}
         />
       )}
     </>

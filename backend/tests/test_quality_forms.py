@@ -289,11 +289,100 @@ class TestSubmitStageAuthorization:
             submit_stage(db, user, session_id=5, stage_number=1, payload=self._payload())
         assert exc_info.value.status_code == 409
 
-    def test_supervisor_own_branch_stage_accepted(self):
+    def test_supervisor_own_branch_stage3_accepted(self):
         user = _make_user("supervisor", tenant_id=1, branch_id=10)
         row = _make_session_row(session_id=5, tenant_id=1, branch_id=10)
-        stage_row = _make_stage_row(stage_number=1, session_id=5)
         db = self._make_db(session_row=row, existing_stage=None, stage_count=0)
-        db.refresh.side_effect = lambda obj: setattr(obj, "id", 100) or setattr(obj, "session_id", 5) or setattr(obj, "stage_number", 1) or setattr(obj, "stage_name_ar", "التأكد من جاهزية المواد") or setattr(obj, "submitted_by_name", "Test User") or setattr(obj, "submitted_at", datetime(2026, 1, 1, 13, 0, 0)) or setattr(obj, "answers", "{}") or setattr(obj, "measurements", None) or setattr(obj, "notes", None)
-        result = submit_stage(db, user, session_id=5, stage_number=1, payload=self._payload())
-        assert result.stage_number == 1
+        db.refresh.side_effect = lambda obj: setattr(obj, "id", 100) or setattr(obj, "session_id", 5) or setattr(obj, "stage_number", 3) or setattr(obj, "stage_name_ar", "انتهاء عملية الطبخ") or setattr(obj, "submitted_by_name", "Test User") or setattr(obj, "submitted_at", datetime(2026, 1, 1, 13, 0, 0)) or setattr(obj, "answers", "{}") or setattr(obj, "measurements", None) or setattr(obj, "notes", None)
+        payload = StageSubmitPayload(answers={"q1": "yes", "q2": "no", "q3": "yes", "q4": "yes"})
+        result = submit_stage(db, user, session_id=5, stage_number=3, payload=payload)
+        assert result.stage_number == 3
+
+
+# ---------------------------------------------------------------------------
+# Service: submit_stage — Stage 3 required-answer validation
+# ---------------------------------------------------------------------------
+
+VALID_STAGE3_ANSWERS = {"q1": "yes", "q2": "no", "q3": "yes", "q4": "yes"}
+
+
+class TestSubmitStageStage3Validation:
+    def _make_db(self, session_row=None, stage_count: int = 0):
+        db = MagicMock()
+        call_count = [0]
+
+        def _query(model):
+            call_count[0] += 1
+            q = MagicMock()
+            q.filter.return_value = q
+            if call_count[0] == 1:
+                q.first.return_value = session_row
+            elif call_count[0] == 2:
+                q.first.return_value = None  # no existing submission
+            else:
+                q.count.return_value = stage_count
+            return q
+
+        db.query.side_effect = _query
+        db.add = MagicMock()
+        db.commit = MagicMock()
+
+        def _refresh(obj):
+            obj.id = 200
+            obj.session_id = 5
+            obj.stage_number = 3
+            obj.stage_name_ar = "انتهاء عملية الطبخ"
+            obj.submitted_by_name = "Test User"
+            obj.submitted_at = datetime(2026, 1, 1, 14, 0, 0)
+            obj.answers = "{}"
+            obj.measurements = None
+            obj.notes = None
+
+        db.refresh = MagicMock(side_effect=_refresh)
+        return db
+
+    def _session(self):
+        return _make_session_row(session_id=5, tenant_id=1, branch_id=10)
+
+    def test_stage3_all_valid_answers_accepted(self):
+        user = _make_user("supervisor", tenant_id=1, branch_id=10)
+        db = self._make_db(session_row=self._session(), stage_count=0)
+        payload = StageSubmitPayload(answers=VALID_STAGE3_ANSWERS)
+        result = submit_stage(db, user, session_id=5, stage_number=3, payload=payload)
+        assert result.stage_number == 3
+
+    def test_stage3_missing_one_answer_raises_422(self):
+        user = _make_user("supervisor", tenant_id=1, branch_id=10)
+        db = self._make_db(session_row=self._session())
+        partial = {k: v for k, v in VALID_STAGE3_ANSWERS.items() if k != "q3"}
+        payload = StageSubmitPayload(answers=partial)
+        with pytest.raises(HTTPException) as exc_info:
+            submit_stage(db, user, session_id=5, stage_number=3, payload=payload)
+        assert exc_info.value.status_code == 422
+
+    def test_stage3_empty_answers_raises_422(self):
+        user = _make_user("supervisor", tenant_id=1, branch_id=10)
+        db = self._make_db(session_row=self._session())
+        payload = StageSubmitPayload(answers={})
+        with pytest.raises(HTTPException) as exc_info:
+            submit_stage(db, user, session_id=5, stage_number=3, payload=payload)
+        assert exc_info.value.status_code == 422
+
+    def test_stage3_invalid_answer_value_raises_422(self):
+        user = _make_user("supervisor", tenant_id=1, branch_id=10)
+        db = self._make_db(session_row=self._session())
+        bad = dict(VALID_STAGE3_ANSWERS)
+        bad["q2"] = "maybe"
+        payload = StageSubmitPayload(answers=bad)
+        with pytest.raises(HTTPException) as exc_info:
+            submit_stage(db, user, session_id=5, stage_number=3, payload=payload)
+        assert exc_info.value.status_code == 422
+
+    def test_stage1_no_questions_raises_422(self):
+        """Stages without configured questions must be blocked from submission."""
+        user = _make_user("supervisor", tenant_id=1, branch_id=10)
+        db = self._make_db(session_row=self._session(), stage_count=0)
+        payload = StageSubmitPayload(answers={})
+        with pytest.raises(HTTPException) as exc_info:
+            submit_stage(db, user, session_id=5, stage_number=1, payload=payload)
+        assert exc_info.value.status_code == 422

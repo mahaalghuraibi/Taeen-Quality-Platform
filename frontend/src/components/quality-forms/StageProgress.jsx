@@ -28,8 +28,6 @@ export default function StageProgress({
           const isNext = num === nextStage;
           const def = stageDefinitions.find((d) => d.stage_number === num);
           const label = def?.name_ar ?? `المرحلة ${num}`;
-          const clickable = !done;
-
           return (
             <div key={num} className="flex flex-1 flex-col items-center gap-1.5">
               {/* connector line before each step except the first */}
@@ -44,15 +42,14 @@ export default function StageProgress({
                 )}
                 <button
                   type="button"
-                  onClick={() => clickable && onStageClick?.(num)}
-                  disabled={!clickable}
-                  title={done ? `${label} — مكتمل` : isNext ? `افتح: ${label}` : label}
+                  onClick={() => onStageClick?.(num)}
+                  title={done ? `عرض: ${label}` : isNext ? `افتح: ${label}` : label}
                   className={`relative z-10 flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-sky ${
                     done
-                      ? "border-emerald-500 bg-emerald-500/20 text-emerald-300 cursor-default"
+                      ? "border-emerald-500 bg-emerald-500/20 text-emerald-300 cursor-pointer hover:bg-emerald-500/30"
                       : isNext
                         ? "border-sky-400 bg-sky-500/20 text-sky-200 hover:bg-sky-500/30 cursor-pointer"
-                        : "border-white/20 bg-white/5 text-slate-500 cursor-default"
+                        : "border-white/20 bg-white/5 text-slate-500 cursor-pointer hover:bg-white/10"
                   }`}
                 >
                   {done ? (

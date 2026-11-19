@@ -23,7 +23,31 @@ logger = logging.getLogger(__name__)
 STAGE_DEFINITIONS: dict[int, dict] = {
     1: {"name_ar": "التأكد من جاهزية المواد", "questions": []},
     2: {"name_ar": "بداية عملية الطبخ", "questions": []},
-    3: {"name_ar": "انتهاء عملية الطبخ", "questions": []},
+    3: {
+        "name_ar": "انتهاء عملية الطبخ",
+        "questions": [
+            {
+                "id": "q1",
+                "text_ar": "هل درجة حرارة البروتين بعد الطبخ أعلى من 75 درجة مئوية؟",
+                "required": True,
+            },
+            {
+                "id": "q2",
+                "text_ar": "هل يوجد أي احتمالات لحدوث مخاطر غذائية؟",
+                "required": True,
+            },
+            {
+                "id": "q3",
+                "text_ar": "هل فتحات الصرف الصحي مغلقة؟",
+                "required": True,
+            },
+            {
+                "id": "q4",
+                "text_ar": "هل يتم تفريغ النفايات بشكل منتظم؟",
+                "required": True,
+            },
+        ],
+    },
     4: {"name_ar": "بداية مرحلة التعبئة", "questions": []},
     5: {"name_ar": "بداية عملية التوزيع", "questions": []},
 }
@@ -257,6 +281,27 @@ def submit_stage(
         )
 
     stage_def = STAGE_DEFINITIONS[stage_number]
+
+    if not stage_def.get("questions"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="لم يتم إعداد أسئلة هذه المرحلة بعد — لا يمكن التسليم",
+        )
+
+    # Validate required answers.
+    _VALID_YESNO = frozenset({"yes", "no"})
+    required_ids = [q["id"] for q in stage_def.get("questions", []) if q.get("required")]
+    if required_ids:
+        invalid = [
+            qid for qid in required_ids
+            if str(payload.answers.get(qid, "")).lower() not in _VALID_YESNO
+        ]
+        if invalid:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="يجب الإجابة على جميع الأسئلة الإلزامية بـ نعم أو لا",
+            )
+
     stage = QualityFormStageSubmission(
         session_id=session_id,
         stage_number=stage_number,
