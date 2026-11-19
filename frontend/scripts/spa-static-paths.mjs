@@ -31,6 +31,7 @@ const ROUTE_DIRS = [
   "reports",
   "dish-reviews",
   "employees",
+  "quality-forms",
   "settings",
   "mask-check",
   "people-count-check",
