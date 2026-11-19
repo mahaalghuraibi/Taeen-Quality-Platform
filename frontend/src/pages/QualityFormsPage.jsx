@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import DashboardNav from "../components/navigation/DashboardNav.jsx";
 import QualityFormsSection from "../components/quality-forms/QualityFormsSection.jsx";
 import Toast from "../components/shared/Toast.jsx";
@@ -57,7 +57,18 @@ export default function QualityFormsPage() {
       />
 
       <main className="relative z-0 mx-auto max-w-7xl px-3 pb-6 pt-14 sm:px-6 sm:pb-8 sm:pt-16 lg:px-8 lg:pb-10">
-        <QualityFormsSection getAccessToken={getAccessToken} />
+        <div className="mb-5 mt-4">
+          <Link
+            to="/analytics"
+            className="inline-flex items-center gap-1.5 text-sm text-slate-400 transition hover:text-slate-200"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+              <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02z" clipRule="evenodd" />
+            </svg>
+            العودة إلى لوحة السوبرفايزر
+          </Link>
+        </div>
+        <QualityFormsSection getAccessToken={getAccessToken} role={role} />
       </main>
 
       <Toast toast={toast} />

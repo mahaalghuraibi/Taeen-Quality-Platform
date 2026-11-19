@@ -1,9 +1,31 @@
 import { apiUrl } from "../config/apiBase.js";
 
 const BASE = apiUrl("/api/v1/quality-forms");
+const USERS_ME = apiUrl("/api/v1/users/me");
+const BRANCHES = apiUrl("/api/v1/branches");
 
 function authHeaders(token) {
   return { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+}
+
+export async function fetchCurrentUser({ token }) {
+  const res = await fetch(USERS_ME, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) return { ok: false, status: res.status, body: data };
+  return { ok: true, data };
+}
+
+export async function fetchBranches({ token }) {
+  const res = await fetch(BRANCHES, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) return { ok: false, status: res.status, body: data };
+  return { ok: true, data };
 }
 
 export async function fetchStageDefinitions({ token }) {
@@ -27,11 +49,13 @@ export async function fetchSessions({ token, mealDate }) {
   return { ok: true, data };
 }
 
-export async function createSession({ token, meal_date, meal_period }) {
+export async function createSession({ token, meal_date, meal_period, branch_id }) {
+  const payload = { meal_date, meal_period };
+  if (branch_id != null) payload.branch_id = branch_id;
   const res = await fetch(`${BASE}/sessions`, {
     method: "POST",
     headers: authHeaders(token),
-    body: JSON.stringify({ meal_date, meal_period }),
+    body: JSON.stringify(payload),
   });
   const data = await res.json().catch(() => null);
   if (!res.ok) return { ok: false, status: res.status, body: data };
