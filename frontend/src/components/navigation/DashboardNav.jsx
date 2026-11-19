@@ -61,10 +61,10 @@ export default function DashboardNav({
                 to={item.to}
                 onClick={() => onBeforeSectionNav?.()}
                 aria-current={isActive ? "page" : undefined}
-                className={`nav-tab whitespace-nowrap rounded-[10px] px-3 py-2 text-sm font-medium ${
+                className={`nav-tab whitespace-nowrap px-3 py-2 text-sm font-medium transition-colors ${
                   isActive
-                    ? "border border-[rgba(56,189,248,0.55)] bg-[rgba(59,130,246,0.15)] text-white"
-                    : "border border-transparent bg-transparent text-[#aaa] hover:bg-[rgba(59,130,246,0.08)] hover:text-white"
+                    ? "border-b-2 border-brand-sky text-white"
+                    : "border-b-2 border-transparent text-slate-400 hover:text-white"
                 }`}
               >
                 <span className="inline-flex items-center gap-1.5">
@@ -84,7 +84,7 @@ export default function DashboardNav({
           <button
             type="button"
             onClick={logout}
-            className="min-h-[40px] rounded-xl border border-accent-red/35 bg-accent-red/10 px-3 py-2 text-xs font-semibold text-red-200 transition hover:bg-accent-red/20 hover:text-white sm:px-3.5 sm:text-sm"
+            className="px-2 py-1.5 text-xs font-medium text-slate-500 transition hover:text-red-400 sm:text-sm"
           >
             <span className="sm:hidden">خروج</span>
             <span className="hidden sm:inline">تسجيل الخروج</span>
@@ -109,10 +109,10 @@ export default function DashboardNav({
                   setMobileNavOpen(false);
                 }}
                 aria-current={isActive ? "page" : undefined}
-                className={`nav-tab rounded-[10px] px-3 py-2 text-sm font-medium ${
+                className={`nav-tab rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                   isActive
-                    ? "border border-[rgba(56,189,248,0.65)] bg-[rgba(59,130,246,0.18)] text-white"
-                    : "border border-transparent bg-transparent text-[#aaa] hover:bg-[rgba(59,130,246,0.08)] hover:text-white"
+                    ? "bg-[rgba(56,189,248,0.1)] text-white"
+                    : "text-slate-400 hover:bg-white/5 hover:text-white"
                 }`}
               >
                 <span className="inline-flex items-center gap-2">

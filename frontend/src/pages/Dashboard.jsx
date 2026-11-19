@@ -1112,9 +1112,92 @@ function PpeStatusDashboard({ result, liveActive, liveTickBusy, manualLoading, z
   );
 }
 
+function ChevronDownIcon({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconCamera({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+function IconUsers({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function IconDoc({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function IconCog({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+function AccordionSection({ id, icon, title, isOpen, onToggle, children }) {
+  const headerId = `acc-hdr-${id}`;
+  const panelId = `acc-pnl-${id}`;
+  return (
+    <div className="mb-2">
+      <button
+        id={headerId}
+        type="button"
+        aria-expanded={isOpen}
+        aria-controls={panelId}
+        onClick={onToggle}
+        className="w-full flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl border border-white/10 bg-[#0f172a] text-right hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-sky"
+      >
+        <span className="flex items-center gap-3 text-sm font-semibold text-white">
+          {icon}
+          {title}
+        </span>
+        <ChevronDownIcon className={`h-4 w-4 text-slate-400 transition-transform duration-300 ${isOpen ? "rotate-180" : ""}`} />
+      </button>
+      <div
+        id={panelId}
+        role="region"
+        aria-labelledby={headerId}
+        style={{ display: "grid", gridTemplateRows: isOpen ? "1fr" : "0fr", transition: "grid-template-rows 320ms ease" }}
+      >
+        <div style={{ overflow: "hidden", minHeight: 0 }}>
+          <div className="pt-3">{children}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const location = useLocation();
   const navigate = useNavigate();
+  const [expandedSection, setExpandedSection] = useState(() => {
+    const sec = getSupervisorSectionFromPathname(location.pathname);
+    if (sec === SUPERVISOR_SECTION_IDS.qualityForms) return SUPERVISOR_SECTION_IDS.analytics;
+    return sec || SUPERVISOR_SECTION_IDS.analytics;
+  });
   const committedBlobUrlsRef = useRef(new Set());
   const dishFileInputRef = useRef(null);
   const cameraVideoRef = useRef(null);
@@ -1124,8 +1207,6 @@ export default function Dashboard() {
   const staffRecordsSectionRef = useRef(null);
   const staffSpyNavigateTimerRef = useRef(null);
   const staffSpyRafRef = useRef(null);
-  const supervisorSpyNavigateTimerRef = useRef(null);
-  const supervisorSpyRafRef = useRef(null);
   /** When true, next pathname sync must not scroll (coming from scroll-spy navigate). */
   const suppressScrollIntoViewFromSpyRef = useRef(false);
   /** Timestamp (ms) until which scroll-spy must not change the URL. */
@@ -1454,21 +1535,18 @@ export default function Dashboard() {
     lockSectionNavigation(sectionNavLockUntilRef);
   }, []);
 
-  /** Supervisor/admin: pathname → scroll to section (single shot, no fight with scroll-spy). */
-  useEffect(() => {
-    if (!(role === "supervisor" || role === "admin")) return undefined;
-    const sec = getSupervisorSectionFromPathname(location.pathname);
-    if (!sec) return undefined;
-    lastSpySectionIdRef.current = sec;
-    if (suppressScrollIntoViewFromSpyRef.current) {
-      suppressScrollIntoViewFromSpyRef.current = false;
-      return undefined;
-    }
-    lockSectionNavigation(sectionNavLockUntilRef);
-    const raf = requestAnimationFrame(() => {
-      scrollToSectionElement(sec);
+  const openSection = useCallback((id) => {
+    setExpandedSection((prev) => {
+      const next = prev === id ? null : id;
+      if (next) navigate(supervisorPathFromSectionId(next), { replace: true });
+      return next;
     });
-    return () => cancelAnimationFrame(raf);
+  }, [navigate]);
+
+  useEffect(() => {
+    if (!(role === "supervisor" || role === "admin")) return;
+    const sec = getSupervisorSectionFromPathname(location.pathname);
+    if (sec && sec !== SUPERVISOR_SECTION_IDS.qualityForms) setExpandedSection(sec);
   }, [location.pathname, role]);
 
   /** Staff: pathname → scroll to section. */
@@ -1547,108 +1625,6 @@ export default function Dashboard() {
     };
   }, [role, navigate]);
 
-  useEffect(() => {
-    if (!(role === "supervisor" || role === "admin")) return undefined;
-    let cancelled = false;
-    let observer = null;
-    let attachRaf = null;
-    let attempts = 0;
-
-    const buildNodes = () =>
-      [
-        supervisorAnalyticsRef.current,
-        supervisorCamerasRef.current,
-        supervisorAlertsRef.current,
-        supervisorReviewsRef.current,
-        supervisorReportsRef.current,
-        supervisorEmployeesRef.current,
-        supervisorSettingsRef.current,
-      ].filter(Boolean);
-
-    const attach = () => {
-      const nodes = buildNodes();
-      if (nodes.length === 0) return false;
-      observer = new IntersectionObserver(
-        () => {
-          if (isSectionNavigationLocked(sectionNavLockUntilRef)) return;
-          if (supervisorSpyRafRef.current != null) return;
-          supervisorSpyRafRef.current = requestAnimationFrame(() => {
-            supervisorSpyRafRef.current = null;
-            if (isSectionNavigationLocked(sectionNavLockUntilRef)) return;
-            const liveNodes = buildNodes();
-            if (liveNodes.length === 0) return;
-            let bestId = null;
-            let bestDist = Number.POSITIVE_INFINITY;
-            for (const el of liveNodes) {
-              const top = el.getBoundingClientRect().top;
-              const dist = Math.abs(top - 120);
-              if (dist < bestDist) {
-                bestDist = dist;
-                bestId = el.id;
-              }
-            }
-            if (!bestId || bestId === lastSpySectionIdRef.current) return;
-            const cur = typeof window !== "undefined" ? window.location.pathname : "";
-            if (
-              bestId === SUPERVISOR_SECTION_IDS.employees &&
-              cur.startsWith(`${ROUTES.employees}/`)
-            ) {
-              return;
-            }
-            if (bestId === SUPERVISOR_SECTION_IDS.alerts && cur.startsWith(`${ROUTES.alerts}/`)) {
-              return;
-            }
-            if (bestId === SUPERVISOR_SECTION_IDS.cameras && cur.startsWith(`${ROUTES.cameras}/`)) {
-              return;
-            }
-            if (bestId === SUPERVISOR_SECTION_IDS.reports && cur.startsWith(`${ROUTES.reports}/`)) {
-              return;
-            }
-            const nextPath = supervisorPathFromSectionId(bestId);
-            if (typeof window !== "undefined" && window.location.pathname !== nextPath) {
-              if (supervisorSpyNavigateTimerRef.current) window.clearTimeout(supervisorSpyNavigateTimerRef.current);
-              supervisorSpyNavigateTimerRef.current = window.setTimeout(() => {
-                supervisorSpyNavigateTimerRef.current = null;
-                if (isSectionNavigationLocked(sectionNavLockUntilRef)) return;
-                if (typeof window !== "undefined" && window.location.pathname !== nextPath) {
-                  lastSpySectionIdRef.current = bestId;
-                  suppressScrollIntoViewFromSpyRef.current = true;
-                  navigate(nextPath, { replace: true });
-                }
-              }, 280);
-            }
-          });
-        },
-        { root: null, rootMargin: "-22% 0px -58% 0px", threshold: [0, 0.12] },
-      );
-      nodes.forEach((el) => observer.observe(el));
-      return true;
-    };
-
-    const tryAttach = () => {
-      if (cancelled) return;
-      if (attach()) return;
-      attempts += 1;
-      if (attempts > 40) return;
-      attachRaf = requestAnimationFrame(tryAttach);
-    };
-
-    tryAttach();
-
-    return () => {
-      cancelled = true;
-      if (attachRaf != null) cancelAnimationFrame(attachRaf);
-      observer?.disconnect();
-      if (supervisorSpyRafRef.current != null) {
-        cancelAnimationFrame(supervisorSpyRafRef.current);
-        supervisorSpyRafRef.current = null;
-      }
-      if (supervisorSpyNavigateTimerRef.current) {
-        window.clearTimeout(supervisorSpyNavigateTimerRef.current);
-        supervisorSpyNavigateTimerRef.current = null;
-      }
-    };
-  }, [role, navigate]);
 
   /** Browser tab title — SaaS-style Arabic titles. */
   useEffect(() => {
@@ -3964,6 +3940,13 @@ export default function Dashboard() {
           </section>
         ) : (
           <>
+            <AccordionSection
+              id={SUPERVISOR_SECTION_IDS.analytics}
+              icon={<IconChart className="h-5 w-5 text-brand-sky" />}
+              title="نظرة عامة"
+              isOpen={expandedSection === SUPERVISOR_SECTION_IDS.analytics}
+              onToggle={() => openSection(SUPERVISOR_SECTION_IDS.analytics)}
+            >
             <SupervisorExecutiveHero
               branchLabel={executiveBranchLabel}
               liveMonitoringLabel={executiveLiveLabel}
@@ -3985,11 +3968,7 @@ export default function Dashboard() {
               healthLine={monitoringHealthLine}
             />
 
-            <section
-              id="analytics"
-              ref={supervisorAnalyticsRef}
-              className={`dashboard-section-cv ${SECTION_THEME.quality} mb-10 scroll-mt-28 space-y-8 sm:scroll-mt-32`}
-            >
+            <section className={`dashboard-section-cv ${SECTION_THEME.quality} mb-10 space-y-8`}>
               <div className="border-b border-white/10 pb-4">
                 <h3 className="text-lg font-bold tracking-tight text-white">مؤشرات الأداء والتحليلات</h3>
                 <p className="mt-1 text-sm leading-relaxed text-slate-400">{PLATFORM_BRAND.taglineAr}</p>
@@ -4084,12 +4063,16 @@ export default function Dashboard() {
                 </ul>
               </div>
             )}
+            </AccordionSection>
 
-            <section
-              id="alerts"
-              ref={supervisorAlertsRef}
-              className={`dashboard-section-cv ${SECTION_THEME.alerts} mb-8 scroll-mt-28 sm:scroll-mt-32`}
+            <AccordionSection
+              id={SUPERVISOR_SECTION_IDS.alerts}
+              icon={<IconBell className="h-5 w-5 text-accent-amber" />}
+              title="سجل التنبيهات الأمنية"
+              isOpen={expandedSection === SUPERVISOR_SECTION_IDS.alerts}
+              onToggle={() => openSection(SUPERVISOR_SECTION_IDS.alerts)}
             >
+            <section className={`dashboard-section-cv ${SECTION_THEME.alerts} mb-8`}>
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3 border-b border-white/10 pb-4">
                 <h3 className="flex items-center gap-2 text-lg font-bold tracking-tight text-white">
                   <IconBell className="h-5 w-5 text-accent-amber" />
@@ -4283,12 +4266,16 @@ export default function Dashboard() {
                 );
               })()}
             </section>
+            </AccordionSection>
 
-            <section
-              id="cameras"
-              ref={supervisorCamerasRef}
-              className={`dashboard-section-cv ${SECTION_THEME.cameras} mb-8 scroll-mt-28 overflow-hidden !p-0 sm:scroll-mt-32`}
+            <AccordionSection
+              id={SUPERVISOR_SECTION_IDS.cameras}
+              icon={<IconCamera className="h-5 w-5 text-slate-300" />}
+              title="الكاميرات"
+              isOpen={expandedSection === SUPERVISOR_SECTION_IDS.cameras}
+              onToggle={() => openSection(SUPERVISOR_SECTION_IDS.cameras)}
             >
+            <section className={`dashboard-section-cv ${SECTION_THEME.cameras} mb-8 overflow-hidden !p-0`}>
               <div className="border-b border-white/10 bg-[#020617]/95 px-5 py-4">
                 <h3 className="text-lg font-bold text-white">الكاميرات — {PLATFORM_BRAND.nameShortAr}</h3>
                 <p className="mt-1 text-xs text-slate-400">
@@ -4679,8 +4666,29 @@ export default function Dashboard() {
                 </div>
               )}
             </section>
+            </AccordionSection>
+
+            <div className="mb-2">
+              <Link
+                to={ROUTES.qualityForms}
+                className="w-full flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl border border-white/10 bg-[#0f172a] hover:bg-white/5 transition-colors"
+              >
+                <span className="flex items-center gap-3 text-sm font-semibold text-white">
+                  <span className="text-base" aria-hidden>📋</span>
+                  نماذج مراقبة الجودة
+                </span>
+                <span className="text-[11px] text-slate-400">فتح ←</span>
+              </Link>
+            </div>
 
             {(role === "supervisor" || role === "admin") ? (
+              <AccordionSection
+                id={SUPERVISOR_SECTION_IDS.reports}
+                icon={<IconDoc className="h-5 w-5 text-slate-300" />}
+                title="التقارير"
+                isOpen={expandedSection === SUPERVISOR_SECTION_IDS.reports}
+                onToggle={() => openSection(SUPERVISOR_SECTION_IDS.reports)}
+              >
               <ReportsHub
                 sectionRef={supervisorReportsRef}
                 sectionClassName={SECTION_THEME.reports}
@@ -4713,13 +4721,17 @@ export default function Dashboard() {
                 reportSettings={adminSettings.reports}
                 setToast={setToast}
               />
+              </AccordionSection>
             ) : null}
 
-            <section
-              id="dish-reviews"
-              ref={supervisorReviewsRef}
-              className={`dashboard-section-cv ${SECTION_THEME.neutral} mb-8 scroll-mt-28 sm:scroll-mt-32`}
+            <AccordionSection
+              id={SUPERVISOR_SECTION_IDS.reviews}
+              icon={<IconDish className="h-5 w-5 text-brand-sky" />}
+              title="مراجعة الأطباق"
+              isOpen={expandedSection === SUPERVISOR_SECTION_IDS.reviews}
+              onToggle={() => openSection(SUPERVISOR_SECTION_IDS.reviews)}
             >
+            <section className={`dashboard-section-cv ${SECTION_THEME.neutral} mb-8`}>
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <h3 className="text-lg font-bold text-white">مراجعة الأطباق</h3>
@@ -5010,12 +5022,16 @@ export default function Dashboard() {
                 </div>
               )}
             </section>
+            </AccordionSection>
 
-            <section
-              id="employees"
-              ref={supervisorEmployeesRef}
-              className={`dashboard-section-cv ${SECTION_THEME.neutral} mb-8 scroll-mt-28 sm:scroll-mt-32`}
+            <AccordionSection
+              id={SUPERVISOR_SECTION_IDS.employees}
+              icon={<IconUsers className="h-5 w-5 text-slate-300" />}
+              title="الموظفون"
+              isOpen={expandedSection === SUPERVISOR_SECTION_IDS.employees}
+              onToggle={() => openSection(SUPERVISOR_SECTION_IDS.employees)}
             >
+            <section className={`dashboard-section-cv ${SECTION_THEME.neutral} mb-8`}>
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <h3 className="text-lg font-bold text-white">الموظفين</h3>
@@ -5113,8 +5129,7 @@ export default function Dashboard() {
                           type="button"
                           onClick={() => {
                             setReviewFilters((f) => ({ ...f, employee: e.email || e.username }));
-                            lockSectionNavForScroll();
-                            scrollToSectionElement("dish-reviews");
+                            openSection(SUPERVISOR_SECTION_IDS.reviews);
                           }}
                           className="col-span-2 mt-2 rounded-lg border border-brand-sky/40 bg-brand/15 px-2 py-1 text-xs font-semibold text-sky-100"
                         >
@@ -5127,12 +5142,17 @@ export default function Dashboard() {
               )}
             </section>
 
+            </AccordionSection>
+
             {role === "admin" ? (
-            <section
-              id="settings"
-              ref={supervisorSettingsRef}
-              className={`${glassCard} mt-6 scroll-mt-28 sm:scroll-mt-32`}
+            <AccordionSection
+              id={SUPERVISOR_SECTION_IDS.settings}
+              icon={<IconCog className="h-5 w-5 text-slate-300" />}
+              title="إعدادات النظام"
+              isOpen={expandedSection === SUPERVISOR_SECTION_IDS.settings}
+              onToggle={() => openSection(SUPERVISOR_SECTION_IDS.settings)}
             >
+            <section className={`${glassCard} mt-2`}>
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3 border-b border-white/10 pb-3">
                 <div>
                   <h3 className="text-lg font-bold text-white">إعدادات النظام</h3>
@@ -5417,6 +5437,7 @@ export default function Dashboard() {
                 </div>
               )}
             </section>
+            </AccordionSection>
             ) : null}
           </>
         )}
