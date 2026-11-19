@@ -180,6 +180,45 @@ export function legacyHashRedirectPath(hash, role) {
  * Active tab for top nav: compares pathname to `to` and detail routes.
  * `item` shape: { to, sectionId } from Dashboard navLinks.
  */
+/**
+ * Navigation link arrays keyed by role — single source of truth consumed by
+ * Dashboard.jsx (scroll-spy page) and any standalone page (e.g. QualityFormsPage).
+ * Adding or renaming a nav item here automatically updates both surfaces.
+ */
+export function getNavLinks(role) {
+  if (role === "staff") {
+    return [
+      { to: ROUTES.dashboard, label: "توثيق الأطباق", emoji: "📸", sectionId: STAFF_SECTION_IDS.doc },
+      { to: ROUTES.dashboardSearch, label: "البحث والتصفية", emoji: "🔎", sectionId: STAFF_SECTION_IDS.search },
+      { to: ROUTES.dashboardRecords, label: "سجل الأطباق", emoji: "📋", sectionId: STAFF_SECTION_IDS.records },
+    ];
+  }
+  if (role === "supervisor") {
+    return [
+      { to: ROUTES.analytics, label: "التحليلات", sectionId: SUPERVISOR_SECTION_IDS.analytics },
+      { to: ROUTES.alerts, label: "التنبيهات", sectionId: SUPERVISOR_SECTION_IDS.alerts },
+      { to: ROUTES.cameras, label: "الكاميرات", sectionId: SUPERVISOR_SECTION_IDS.cameras },
+      { to: ROUTES.reports, label: "التقارير", sectionId: SUPERVISOR_SECTION_IDS.reports },
+      { to: ROUTES.dishReviews, label: "مراجعة الأطباق", sectionId: SUPERVISOR_SECTION_IDS.reviews },
+      { to: ROUTES.employees, label: "الموظفين", sectionId: SUPERVISOR_SECTION_IDS.employees },
+      { to: ROUTES.qualityForms, label: "نماذج الجودة", sectionId: SUPERVISOR_SECTION_IDS.qualityForms },
+    ];
+  }
+  if (role === "admin") {
+    return [
+      { to: ROUTES.analytics, label: "التحليلات", sectionId: SUPERVISOR_SECTION_IDS.analytics },
+      { to: ROUTES.alerts, label: "التنبيهات", sectionId: SUPERVISOR_SECTION_IDS.alerts },
+      { to: ROUTES.cameras, label: "الكاميرات", sectionId: SUPERVISOR_SECTION_IDS.cameras },
+      { to: ROUTES.reports, label: "التقارير", sectionId: SUPERVISOR_SECTION_IDS.reports },
+      { to: ROUTES.dishReviews, label: "مراجعة الأطباق", sectionId: SUPERVISOR_SECTION_IDS.reviews },
+      { to: ROUTES.employees, label: "الموظفين", sectionId: SUPERVISOR_SECTION_IDS.employees },
+      { to: ROUTES.qualityForms, label: "نماذج الجودة", sectionId: SUPERVISOR_SECTION_IDS.qualityForms },
+      { to: ROUTES.settings, label: "الإعدادات", sectionId: SUPERVISOR_SECTION_IDS.settings },
+    ];
+  }
+  return [];
+}
+
 export function navItemIsActive(pathname, role, item) {
   if (!item?.to || !pathname) return false;
   const p = pathname.split("?")[0];

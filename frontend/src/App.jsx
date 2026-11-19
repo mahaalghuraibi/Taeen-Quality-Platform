@@ -19,6 +19,7 @@ const AdminRequestsPage = lazy(() => import("./pages/AdminRequests.jsx"));
 const AdminBranchesPage = lazy(() => import("./pages/AdminBranches.jsx"));
 const MaskDetectionTest = lazy(() => import("./pages/MaskDetectionTest.jsx"));
 const PeopleCountTest = lazy(() => import("./pages/PeopleCountTest.jsx"));
+const QualityFormsPage = lazy(() => import("./pages/QualityFormsPage.jsx"));
 
 function RouteFallback() {
   return (
@@ -100,7 +101,16 @@ const router = createBrowserRouter([
   { path: "/dish-reviews", element: dashboardElement },
   { path: "/employees", element: dashboardElement },
   { path: "/employees/:id", element: dashboardElement },
-  { path: "/quality-forms", element: dashboardElement },
+  {
+    path: "/quality-forms",
+    element: (
+      <PrivateRoute>
+        <Suspense fallback={<RouteFallback />}>
+          <QualityFormsPage />
+        </Suspense>
+      </PrivateRoute>
+    ),
+  },
   { path: "/settings", element: dashboardElement },
 
   /* Legacy paths → clean URLs */

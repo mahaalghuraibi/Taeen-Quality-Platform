@@ -32,7 +32,6 @@ import SupervisorMonitoringOverview from "../components/supervisor/SupervisorMon
 import LazyWhenVisible from "../components/shared/LazyWhenVisible.jsx";
 import SupervisorAnalyticsRecharts from "../components/supervisor/SupervisorAnalyticsRecharts.jsx";
 import ReportsHub from "../components/reports/ReportsHub.jsx";
-import QualityFormsSection from "../components/quality-forms/QualityFormsSection.jsx";
 import StickyAnalyticsSummaryBar from "../components/supervisor/StickyAnalyticsSummaryBar.jsx";
 import ExpandMoreList from "../components/shared/ExpandMoreList.jsx";
 import EmptyState from "../components/shared/EmptyState.jsx";
@@ -69,6 +68,7 @@ import {
   isSupervisorDashboardPath,
   legacyHashRedirectPath,
   DASHBOARD_PAGE_TITLES,
+  getNavLinks,
 } from "../constants/appRoutes.js";
 import {
   isSectionNavigationLocked,
@@ -1140,7 +1140,6 @@ export default function Dashboard() {
   const supervisorReviewsRef = useRef(null);
   const supervisorReportsRef = useRef(null);
   const supervisorEmployeesRef = useRef(null);
-  const supervisorQualityFormsRef = useRef(null);
   const supervisorSettingsRef = useRef(null);
   const [selectedImage, setSelectedImage] = useState(null);
   const [selectedPreviewUrl, setSelectedPreviewUrl] = useState("");
@@ -1563,7 +1562,6 @@ export default function Dashboard() {
         supervisorReviewsRef.current,
         supervisorReportsRef.current,
         supervisorEmployeesRef.current,
-        supervisorQualityFormsRef.current,
         supervisorSettingsRef.current,
       ].filter(Boolean);
 
@@ -1834,36 +1832,7 @@ export default function Dashboard() {
       ? "المراقبة الذكية تعمل على الكاميرات المتصلة"
       : "لا توجد كاميرا متصلة بعد";
 
-  const navLinks = useMemo(() => {
-    if (role === "staff") {
-      return [
-        { to: ROUTES.dashboard, label: "توثيق الأطباق", emoji: "📸", sectionId: STAFF_SECTION_IDS.doc },
-        { to: ROUTES.dashboardSearch, label: "البحث والتصفية", emoji: "🔎", sectionId: STAFF_SECTION_IDS.search },
-        { to: ROUTES.dashboardRecords, label: "سجل الأطباق", emoji: "📋", sectionId: STAFF_SECTION_IDS.records },
-      ];
-    }
-    if (role === "supervisor") {
-      return [
-        { to: ROUTES.analytics, label: "التحليلات", sectionId: SUPERVISOR_SECTION_IDS.analytics },
-        { to: ROUTES.alerts, label: "التنبيهات", sectionId: SUPERVISOR_SECTION_IDS.alerts },
-        { to: ROUTES.cameras, label: "الكاميرات", sectionId: SUPERVISOR_SECTION_IDS.cameras },
-        { to: ROUTES.reports, label: "التقارير", sectionId: SUPERVISOR_SECTION_IDS.reports },
-        { to: ROUTES.dishReviews, label: "مراجعة الأطباق", sectionId: SUPERVISOR_SECTION_IDS.reviews },
-        { to: ROUTES.employees, label: "الموظفين", sectionId: SUPERVISOR_SECTION_IDS.employees },
-        { to: ROUTES.qualityForms, label: "نماذج الجودة", sectionId: SUPERVISOR_SECTION_IDS.qualityForms },
-      ];
-    }
-    return [
-      { to: ROUTES.analytics, label: "التحليلات", sectionId: SUPERVISOR_SECTION_IDS.analytics },
-      { to: ROUTES.alerts, label: "التنبيهات", sectionId: SUPERVISOR_SECTION_IDS.alerts },
-      { to: ROUTES.cameras, label: "الكاميرات", sectionId: SUPERVISOR_SECTION_IDS.cameras },
-      { to: ROUTES.reports, label: "التقارير", sectionId: SUPERVISOR_SECTION_IDS.reports },
-      { to: ROUTES.dishReviews, label: "مراجعة الأطباق", sectionId: SUPERVISOR_SECTION_IDS.reviews },
-      { to: ROUTES.employees, label: "الموظفين", sectionId: SUPERVISOR_SECTION_IDS.employees },
-      { to: ROUTES.qualityForms, label: "نماذج الجودة", sectionId: SUPERVISOR_SECTION_IDS.qualityForms },
-      { to: ROUTES.settings, label: "الإعدادات", sectionId: SUPERVISOR_SECTION_IDS.settings },
-    ];
-  }, [role]);
+  const navLinks = useMemo(() => getNavLinks(role), [role]);
 
   const saveAdminSettings = useCallback(async () => {
     const normalized = normalizeAdminSettingsShape(adminSettings);
@@ -5157,14 +5126,6 @@ export default function Dashboard() {
                 </ExpandMoreList>
               )}
             </section>
-
-            {(role === "supervisor" || role === "admin") ? (
-              <QualityFormsSection
-                sectionRef={supervisorQualityFormsRef}
-                sectionClassName={SECTION_THEME.quality}
-                getAccessToken={getAccessToken}
-              />
-            ) : null}
 
             {role === "admin" ? (
             <section

@@ -25,7 +25,7 @@ function todayIso() {
  *   sectionClassName — Tailwind classes for the section wrapper
  *   getAccessToken  — () => string | null
  */
-export default function QualityFormsSection({ sectionRef, sectionClassName, getAccessToken }) {
+export default function QualityFormsSection({ sectionRef, sectionClassName = "", getAccessToken }) {
   const [mealDate, setMealDate] = useState(todayIso);
   const [mealPeriod, setMealPeriod] = useState("lunch");
   const [session, setSession] = useState(null);
