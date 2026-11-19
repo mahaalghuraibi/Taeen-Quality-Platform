@@ -20,6 +20,7 @@ export const SUPERVISOR_SECTION_IDS = {
   reviews: "dish-reviews",
   reports: "reports",
   employees: "employees",
+  qualityForms: "quality-forms",
   settings: "settings",
 };
 
@@ -37,6 +38,7 @@ export const ROUTES = {
   reports: "/reports",
   dishReviews: "/dish-reviews",
   employees: "/employees",
+  qualityForms: "/quality-forms",
   settings: "/settings",
   monitoringLegacy: "/monitoring",
   supervisorLegacy: "/supervisor",
@@ -57,6 +59,7 @@ export const DASHBOARD_PAGE_TITLES = {
     [SUPERVISOR_SECTION_IDS.reviews]: BRAND,
     [SUPERVISOR_SECTION_IDS.reports]: BRAND,
     [SUPERVISOR_SECTION_IDS.employees]: BRAND,
+    [SUPERVISOR_SECTION_IDS.qualityForms]: BRAND,
     [SUPERVISOR_SECTION_IDS.settings]: BRAND,
     default: BRAND,
   },
@@ -76,6 +79,7 @@ export function supervisorPathFromSectionId(sectionId) {
     [SUPERVISOR_SECTION_IDS.reviews]: ROUTES.dishReviews,
     [SUPERVISOR_SECTION_IDS.reports]: ROUTES.reports,
     [SUPERVISOR_SECTION_IDS.employees]: ROUTES.employees,
+    [SUPERVISOR_SECTION_IDS.qualityForms]: ROUTES.qualityForms,
     [SUPERVISOR_SECTION_IDS.settings]: ROUTES.settings,
   };
   return map[sectionId] || ROUTES.analytics;
@@ -95,6 +99,7 @@ export function getStaffSectionFromPathname(pathname) {
 export function getSupervisorSectionFromPathname(pathname) {
   if (pathname === ROUTES.analytics) return SUPERVISOR_SECTION_IDS.analytics;
   if (pathname === ROUTES.settings) return SUPERVISOR_SECTION_IDS.settings;
+  if (pathname === ROUTES.qualityForms) return SUPERVISOR_SECTION_IDS.qualityForms;
   if (pathname.startsWith(`${ROUTES.alerts}/`) || pathname === ROUTES.alerts) {
     return SUPERVISOR_SECTION_IDS.alerts;
   }
@@ -127,6 +132,7 @@ export function isSupervisorDashboardPath(pathname) {
     p === ROUTES.analytics ||
     p === ROUTES.settings ||
     p === ROUTES.dishReviews ||
+    p === ROUTES.qualityForms ||
     p === ROUTES.alerts ||
     p.startsWith(`${ROUTES.alerts}/`) ||
     p === ROUTES.cameras ||
@@ -146,6 +152,7 @@ export const LEGACY_HASH_TO_SUPERVISOR_PATH = {
   "#dish-reviews": ROUTES.dishReviews,
   "#reports": ROUTES.reports,
   "#employees": ROUTES.employees,
+  "#quality-forms": ROUTES.qualityForms,
   "#settings": ROUTES.settings,
 };
 

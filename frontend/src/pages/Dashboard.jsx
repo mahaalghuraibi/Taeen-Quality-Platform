@@ -32,6 +32,7 @@ import SupervisorMonitoringOverview from "../components/supervisor/SupervisorMon
 import LazyWhenVisible from "../components/shared/LazyWhenVisible.jsx";
 import SupervisorAnalyticsRecharts from "../components/supervisor/SupervisorAnalyticsRecharts.jsx";
 import ReportsHub from "../components/reports/ReportsHub.jsx";
+import QualityFormsSection from "../components/quality-forms/QualityFormsSection.jsx";
 import StickyAnalyticsSummaryBar from "../components/supervisor/StickyAnalyticsSummaryBar.jsx";
 import ExpandMoreList from "../components/shared/ExpandMoreList.jsx";
 import EmptyState from "../components/shared/EmptyState.jsx";
@@ -1139,6 +1140,7 @@ export default function Dashboard() {
   const supervisorReviewsRef = useRef(null);
   const supervisorReportsRef = useRef(null);
   const supervisorEmployeesRef = useRef(null);
+  const supervisorQualityFormsRef = useRef(null);
   const supervisorSettingsRef = useRef(null);
   const [selectedImage, setSelectedImage] = useState(null);
   const [selectedPreviewUrl, setSelectedPreviewUrl] = useState("");
@@ -1561,6 +1563,7 @@ export default function Dashboard() {
         supervisorReviewsRef.current,
         supervisorReportsRef.current,
         supervisorEmployeesRef.current,
+        supervisorQualityFormsRef.current,
         supervisorSettingsRef.current,
       ].filter(Boolean);
 
@@ -1847,6 +1850,7 @@ export default function Dashboard() {
         { to: ROUTES.reports, label: "التقارير", sectionId: SUPERVISOR_SECTION_IDS.reports },
         { to: ROUTES.dishReviews, label: "مراجعة الأطباق", sectionId: SUPERVISOR_SECTION_IDS.reviews },
         { to: ROUTES.employees, label: "الموظفين", sectionId: SUPERVISOR_SECTION_IDS.employees },
+        { to: ROUTES.qualityForms, label: "نماذج الجودة", sectionId: SUPERVISOR_SECTION_IDS.qualityForms },
       ];
     }
     return [
@@ -1856,6 +1860,7 @@ export default function Dashboard() {
       { to: ROUTES.reports, label: "التقارير", sectionId: SUPERVISOR_SECTION_IDS.reports },
       { to: ROUTES.dishReviews, label: "مراجعة الأطباق", sectionId: SUPERVISOR_SECTION_IDS.reviews },
       { to: ROUTES.employees, label: "الموظفين", sectionId: SUPERVISOR_SECTION_IDS.employees },
+      { to: ROUTES.qualityForms, label: "نماذج الجودة", sectionId: SUPERVISOR_SECTION_IDS.qualityForms },
       { to: ROUTES.settings, label: "الإعدادات", sectionId: SUPERVISOR_SECTION_IDS.settings },
     ];
   }, [role]);
@@ -5152,6 +5157,14 @@ export default function Dashboard() {
                 </ExpandMoreList>
               )}
             </section>
+
+            {(role === "supervisor" || role === "admin") ? (
+              <QualityFormsSection
+                sectionRef={supervisorQualityFormsRef}
+                sectionClassName={SECTION_THEME.quality}
+                getAccessToken={getAccessToken}
+              />
+            ) : null}
 
             {role === "admin" ? (
             <section

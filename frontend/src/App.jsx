@@ -100,6 +100,7 @@ const router = createBrowserRouter([
   { path: "/dish-reviews", element: dashboardElement },
   { path: "/employees", element: dashboardElement },
   { path: "/employees/:id", element: dashboardElement },
+  { path: "/quality-forms", element: dashboardElement },
   { path: "/settings", element: dashboardElement },
 
   /* Legacy paths → clean URLs */
