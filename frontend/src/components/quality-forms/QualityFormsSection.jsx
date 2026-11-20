@@ -198,7 +198,7 @@ export default function QualityFormsSection({ getAccessToken, role }) {
                   >
                     {branches.length === 0 && <option value="">لا توجد فروع</option>}
                     {branches.map((b) => (
-                      <option key={b.id} value={String(b.id)}>{b.name}</option>
+                      <option key={b.id} value={String(b.id)}>{b.branch_name}</option>
                     ))}
                   </select>
                 )
